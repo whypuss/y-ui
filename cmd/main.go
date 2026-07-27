@@ -20,6 +20,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "WARNING: sudo test failed: %s\n(將需要輸入密碼才能執行管理操作)\n", err)
 	}
 
+	// 啟動時確保網關基礎規則在位（FORWARD + MASQUERADE）
+	_ = exec.RestoreGateway("enp4s0f0", "192.168.31.0/24")
+
 	srv := web.NewServer()
 	srv.SetStatus(exec.GetSystemStatus)
 
