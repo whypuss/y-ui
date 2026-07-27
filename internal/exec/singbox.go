@@ -320,6 +320,69 @@ func RestartSingbox(ctx context.Context) CommandResult {
 	}
 }
 
+// fixSingboxAutoRoute 將 config.json 中 TUN inbound 嘅 auto_route/strict_route 設為 false
+// 防止 sing-box 自動寫 policy routing rules（9000–9010），避免擾路由
+func fixSingboxAutoRoute() CommandResult {
+	script := `python3 << 'PYEOF'
+import json
+path = "/etc/sing-box/config.json"
+with open(path) as f:
+    c = json.load(f)
+for ib in c.get("inbounds", []):
+    if ib.get("type") == "tun":
+        ib["auto_route"] = False
+        ib["strict_route"] = False
+        print("TUN auto_route=False strict_route=False")
+        break
+with open(path, "w") as f:
+    json.dump(c, f, indent=2)
+PYEOF
+`
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		return CommandResult{Ok: false, Stdout: stdout.String(), Stderr: stderr.String(), Error: err.Error()}
+	}
+	return CommandResult{Ok: true, Stdout: stdout.String()}
+}
+
+func checkListenerOnPort(port int) bool {
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("ss -tlnp 2>/dev/null | grep -c \":%d \"", port))
+	out, _ := cmd.Output()
+	n := strings.TrimSpace(string(out))
+	return n != "0"
+}
+
+// startMainProcess 啟動 sing-box 主進程（config.json），帶 TProxy-Mixed :10808 listener
+func startMainProcess() CommandResult {
+	// 檢查主進程是否已運行
+	cmd := exec.Command("sh", "-c", `ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | wc -l`)
+	out, _ := cmd.Output()
+	if strings.TrimSpace(string(out)) != "0" {
+		return CommandResult{Ok: true, Stdout: "main process already running"}
+	}
+
+	// 寫 config.json: auto_route=false + strict_route=false（唔寫 policy routing rules，唔擾路由）
+	fix := FixSingboxDNS(context.Background())
+	if !fix.Ok {
+		return CommandResult{Ok: false, Error: "config fix failed: " + fix.Error}
+	}
+	_ = fix
+
+	// 啟動 systemd service（有 environment + capabilities）
+	r := runCommandWithSudo([]string{"sh", "-c", `
+echo "starting sing-box-main.service"
+systemctl restart sing-box-main.service
+sleep 3
+systemctl is-active sing-box-main.service
+ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head -1
+`})
+	return r
+}
+
 // TproxyOn 啟用 TProxy
 func TproxyOn(ctx context.Context) CommandResult {
 	// 防循環: TUN 開住唔准開 TProxy
@@ -330,20 +393,27 @@ func TproxyOn(ctx context.Context) CommandResult {
 
 	_ = ctx
 
-	// 先確保 config.json 主進程未運行（避免 TUN/TProxy 雙開）
-	if s.SingboxRunning {
-		// 檢查係咪 config.json 主進程
-		cmd := exec.Command("sh", "-c", `ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | wc -l`)
-		out, _ := cmd.Output()
-		if strings.TrimSpace(string(out)) != "0" {
-			TunOff()
+	// 1. 確保主進程運行，10808 listener 在聽（TPROXY 重定向目標）
+	if !checkListenerOnPort(10808) {
+		// 自動啟動主進程（帶 auto_route=false，唔寫 policy rules 擾路由）
+		_ = FixSingboxDNS(ctx)
+		_ = fixSingboxAutoRoute()
+		sm := startMainProcess()
+		if !sm.Ok {
+			return CommandResult{Ok: false, Error: "Failed to start main process: " + sm.Stderr + "\n" + sm.Stdout, Stderr: sm.Stderr, Stdout: sm.Stdout}
 		}
+		// 等 listener 起來
+		time.Sleep(2 * time.Second)
+	}
+	if !checkListenerOnPort(10808) {
+		return CommandResult{Ok: false, Error: "Port 10808 still has no listener after start attempt"}
 	}
 
+	// 2. 寫入 mangle TPROXY rules + iproute
 	script := `/etc/tproxy-rules.sh`
 	r := runCommandWithSudo([]string{"bash", "-c", script})
 
-	// 驗證規則真生效（需要 sudo 看 mangle）
+	// 3. 驗證規則真生效
 	time.Sleep(500 * time.Millisecond)
 	v := runCommandWithSudo([]string{"sh", "-c", `iptables -t mangle -L PREROUTING -n 2>/dev/null | grep -c TPROXY; ip rule show 2>/dev/null | grep -c "fwmark 0x1" || true`})
 	count := strings.TrimSpace(strings.Fields(v.Stdout)[0])
@@ -355,7 +425,6 @@ func TproxyOn(ctx context.Context) CommandResult {
 		return CommandResult{Ok: true, Stdout: r.Stdout, Stderr: r.Stderr + "\n[WARN] TPROXY rules not found in mangle — may need manual config"}
 	}
 
-	_ = ctx
 	return CommandResult{Ok: true, Stdout: r.Stdout + fmt.Sprintf("\n[VERIFY] %s TPROXY rule(s) active", count), Stderr: r.Stderr}
 }
 
