@@ -99,6 +99,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		result = exec.ApplyIptables(nil, cfg)
 	case "iptables-clear":
 		result = exec.ClearIptables(nil)
+		// 清完之後恢復網關基礎規則，確保 LAN 設備仍可直連上網
+		_ = exec.RestoreGateway("enp4s0f0", "192.168.31.0/24")
 	case "iptables-rules":
 		result = exec.IptablesRules()
 	case "iptables-get":

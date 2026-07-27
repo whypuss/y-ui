@@ -473,6 +473,8 @@ func TproxyOff(ctx context.Context) CommandResult {
 	// 清理 mangle + 移除 iproute TPROXY rule
 	script := `iptables -t mangle -F; ip6tables -t mangle -F 2>/dev/null; ip rule del fwmark 0x1/0x1 lookup 100 2>/dev/null; ip route del local 0.0.0.0/0 dev lo table 100 2>/dev/null; echo "TProxy disabled - mangle cleared, iproute rules removed"`
 	r := runCommandWithSudo([]string{"sh", "-c", script})
+	// 恢復網關基礎規則，確保 LAN 設備仍可直連上網
+	_ = RestoreGateway("enp4s0f0", "192.168.31.0/24")
 	_ = ctx
 	return r
 }
@@ -551,6 +553,8 @@ fi
 ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | wc -l
 `)
 	r := runCommandWithSudo([]string{"sh", "-c", buf.String()})
+	// 恢復網關基礎規則，確保 LAN 設備仍可直連上網
+	_ = RestoreGateway("enp4s0f0", "192.168.31.0/24")
 	return r
 }
 

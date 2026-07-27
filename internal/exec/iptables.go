@@ -123,6 +123,27 @@ iptables -C FORWARD -i "%s" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 	return runCommandWithSudo([]string{"bash", "-c", buf.String()})
 }
 
+// RestoreGateway 恢復網關基礎規則（關閉代理後確保 LAN 設備可直連上網）
+func RestoreGateway(iface, lanSubnet string) CommandResult {
+	script := fmt.Sprintf(`
+# 啟用 IP 轉發
+echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/99-yui-forward.conf
+sysctl -p /etc/sysctl.d/99-yui-forward.conf
+
+# FORWARD: LAN→WAN 轉發（放 LAN 網段出對外網卡）
+iptables -C FORWARD -s "%s" -o "%s" -j ACCEPT 2>/dev/null || iptables -A FORWARD -s "%s" -o "%s" -j ACCEPT
+
+# FORWARD: 已建立連接嘅返回流量（入站 WAN → LAN）
+iptables -C FORWARD -i "%s" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || iptables -A FORWARD -i "%s" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# MASQUERADE: 偽裝 LAN 網段
+iptables -t nat -C POSTROUTING -o "%s" -s "%s" -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -o "%s" -s "%s" -j MASQUERADE
+
+echo "gateway restored: ip_forward=1, FORWARD+MASQUERADE for %s/%s"
+`, iface, lanSubnet, iface, lanSubnet, iface, iface, iface, lanSubnet, iface, lanSubnet, iface, lanSubnet, iface, lanSubnet)
+	return runCommandWithSudo([]string{"sh", "-c", script})
+}
+
 // IptablesRules 當前規則快照
 func IptablesRules() CommandResult {
 	script := `echo "=== filter ===" && iptables -L -n -v && echo "=== nat ===" && iptables -t nat -L -n -v && echo "=== mangle ===" && iptables -t mangle -L -n -v && echo "=== ip rule ===" && ip rule show`
