@@ -57,7 +57,7 @@ func RunCommand(command string) CommandResult {
 
 	// 預設需要 sudo 的指令
 	if !needSudo {
-		sudoCmds := []string{"iptables", "ip6tables", "ip", "pkill", "nohup"}
+		sudoCmds := []string{"iptables", "ip6tables", "ip", "pkill", "nohup", "kill", "killall"}
 		for _, sc := range sudoCmds {
 			if args[0] == sc {
 				needSudo = true
@@ -90,13 +90,17 @@ func RunCommand(command string) CommandResult {
 				return r
 			}
 		}
-		return CommandResult{
-			Ok:     false,
-			Stdout: stdout.String(),
-			Stderr: stderr.String(),
-			Rc:     rc,
-			Error:  fmt.Sprintf("exit %d: %s", rc, err.Error()[:100]),
-		}
+	errMsg := err.Error()
+	if len(errMsg) > 100 {
+		errMsg = errMsg[:100]
+	}
+	return CommandResult{
+		Ok:     false,
+		Stdout: stdout.String(),
+		Stderr: stderr.String(),
+		Rc:     rc,
+		Error:  fmt.Sprintf("exit %d: %s", rc, errMsg),
+	}
 	}
 
 	return CommandResult{
@@ -413,21 +417,58 @@ func TunOn() CommandResult {
 	}
 
 	// 用 sudo 啟動 nohup（背景，不斷 SSH）
-	startCmd := `sudo nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 & sleep 3 && ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head -1`
-	start := RunCommand(startCmd)
+	startScript := `nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 & sleep 3 && ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head -1`
+	r := runCommandWithSudo([]string{"sh", "-c", startScript})
 
 	return CommandResult{
-		Ok:     start.Ok,
-		Stdout: "TUN started: " + start.Stdout,
-		Stderr: start.Stderr,
+		Ok:     r.Ok,
+		Stdout: "TUN started: " + r.Stdout,
+		Stderr: r.Stderr,
 	}
 }
 
-// TunOff 關閉 sing-box TUN 主進程（保留 SOCKS 代理進程）
+// TunOff 關閉 sing-box TUN 主進程（保留 SOCKS 代理）
 func TunOff() CommandResult {
-	// 只殺 config.json 主進程，保留 jp-proxy / us-proxy 等 SOCKS
-	killCmd := `for pid in $(ps -o pid= -C sing-box 2>/dev/null); do out=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null); case "$out" in *"config.json"*) kill $pid 2>/dev/null; echo "killed PID $pid" ;; esac; done; sleep 1; echo "TUN disabled"; ip link show | grep -E "tun|tproxy" | head -3 || true`
-	return RunCommand(killCmd)
+	// 直接調用 pkill -f 殺 config.json 主進程（不走 sh -c 避免引號問題）
+	return runCommandWithSudo([]string{"pkill", "-f", "sing-box run -c /etc/sing-box/config.json"})
+}
+
+// runCommandWithSudo 強制用 sudo 執行單一指令
+func runCommandWithSudo(args []string) CommandResult {
+	if len(args) == 0 {
+		return CommandResult{Ok: false, Error: "empty args"}
+	}
+	var stdout, stderr bytes.Buffer
+	// 先試無密碼 sudo
+	cmdArgs := append([]string{"-n"}, args...)
+	cmd := exec.Command("sudo", cmdArgs...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err == nil {
+		return CommandResult{Ok: true, Stdout: stdout.String() + "\nTUN disabled", Stderr: stderr.String()}
+	}
+	// 失敗 → 用密碼
+	password := readPassword()
+	if password == "" {
+		return CommandResult{Ok: false, Error: "sudo failed + no SINGBOX_SUDO_PASS"}
+	}
+	cmdArgs = append([]string{"-S"}, args...)
+	cmd = exec.Command("sudo", cmdArgs...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	pw, _ := cmd.StdinPipe()
+	go func() {
+		pw.Write([]byte(password + "\n"))
+		pw.Close()
+	}()
+	if err := cmd.Run(); err != nil {
+		// pkill 無進程可殺會 exit 1，亦算成功
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return CommandResult{Ok: true, Stdout: "TUN disabled (no process found)", Stderr: stderr.String()}
+		}
+		return CommandResult{Ok: false, Stderr: stderr.String(), Error: "sudo pkill failed: " + err.Error()}
+	}
+	return CommandResult{Ok: true, Stdout: stdout.String() + "\nTUN disabled", Stderr: stderr.String()}
 }
 
 // ClearIptables 清除 iptables
