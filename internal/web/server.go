@@ -345,7 +345,10 @@ async function iptablesRules() {
 async function loadIptablesConfig() {
     try {
         const r = await api('iptables-get');
-        if (!r.interface) return;
+        // 如果返到全部 default 值（無配置文件），保留 HTML 預設勾選
+        if (r.interface === "enp4s0f0" && r.tproxy_port === 10808 && r.router_ip === "192.168.31.1") {
+            return; // 無配置文件，唔覆蓋 HTML checked 預設
+        }
         document.getElementById('i-iface').value = r.interface || '';
         document.getElementById('i-port').value = r.tproxy_port || '';
         document.getElementById('i-router').value = r.router_ip || '';
@@ -357,7 +360,7 @@ async function loadIptablesConfig() {
         document.getElementById('i-fwd').checked = r.forward || false;
         document.getElementById('i-excl').checked = r.exclude_self || false;
     } catch(e) {
-        // 無配置文件，用預設值顯示
+        // 無配置文件，保留 HTML 預設值
     }
 }
 </script>
