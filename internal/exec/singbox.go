@@ -400,9 +400,24 @@ func TunOn() CommandResult {
 }
 
 // TunOff 關閉 sing-box TUN 主進程（保留 SOCKS 代理）
+// 同時清理 sing-box 寫入嘅 policy routing rules（9000–9010）同 table 2022，
+// 避免殘留 rule 攔截所有流量去失效嘅 table 2022，令關 TUN 後依然斷網。
 func TunOff() CommandResult {
-	// 直接調用 pkill -f 殺 config.json 主進程（不走 sh -c 避免引號問題）
-	return runCommandWithSudo([]string{"pkill", "-f", "sing-box run -c /etc/sing-box/config.json"})
+	// 殺主進程
+	r := runCommandWithSudo([]string{"pkill", "-f", "sing-box run -c /etc/sing-box/config.json"})
+
+	// 清理 sing-box auto_route 殘留嘅 policy routing rules + table 2022
+	// 9000/9001/9002/9003/9010 係 sing-box 自動建立，關 TUN 後必須移除
+	_ = runCommandWithSudo([]string{"sh", "-c", `
+for pref in 9010 9003 9002 9001 9000; do
+	ip rule del pref $pref 2>/dev/null || true
+done
+ip route flush table 2022 2>/dev/null || true
+echo "TUN routing rules cleared"
+`})
+
+	_ = r.Rc
+	return r
 }
 
 // runCommandWithSudo 強制用 sudo 執行單一指令
