@@ -1,8 +1,6 @@
 package exec
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -208,6 +206,11 @@ func nodeProtocol(typ, flow string) string {
 
 // GenAnyTLSURL 讀取 AnyTLS inbound 配置，生成 anytls:// 標準節點連結
 func GenAnyTLSURL() (string, CommandResult) {
+	return GenAnyTLSURLWithParams("", 0)
+}
+
+// GenAnyTLSURLWithParams 帶 host/端口參數嘅版本
+func GenAnyTLSURLWithParams(host string, port int) (string, CommandResult) {
 	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
 	if err != nil {
 		return "", CommandResult{Ok: false, Error: "cannot read config.json: " + err.Error()}
@@ -216,6 +219,7 @@ func GenAnyTLSURL() (string, CommandResult) {
 	if err := json.Unmarshal(cfgBytes, &c); err != nil {
 		return "", CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
 	}
+	// 找 AnyTLS inbound，取 UUID
 	var anytls map[string]interface{}
 	for _, v := range c["inbounds"].([]interface{}) {
 		if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "anytls" {
@@ -223,40 +227,70 @@ func GenAnyTLSURL() (string, CommandResult) {
 			break
 		}
 	}
-	if anytls == nil {
-		return "", CommandResult{Ok: false, Error: "no AnyTLS inbound found"}
-	}
-	port, _ := anytls["listen_port"].(float64)
-	if port == 0 {
-		return "", CommandResult{Ok: false, Error: "no listen_port in AnyTLS inbound"}
-	}
-	// server_name
-	var serverName string
-	tls, _ := anytls["tls"].(map[string]interface{})
-	if tls != nil {
-		s, _ := tls["server_name"].(string)
-		serverName = s
-	}
-	// UUID from users[0].password
-	uuids := []string{}
-	users, _ := anytls["users"].([]interface{})
-	for _, u := range users {
-		if ui, ok := u.(map[string]interface{}); ok {
-			pw, _ := ui["password"].(string)
-			uuids = append(uuids, pw)
+	var uuid string
+	if anytls != nil {
+		users, _ := anytls["users"].([]interface{})
+		for _, u := range users {
+			if ui, ok := u.(map[string]interface{}); ok {
+				pw, _ := ui["password"].(string)
+				uuid = pw
+				break
+			}
 		}
 	}
-	if len(uuids) == 0 {
-		// 無 UUID 就自己生成一個
-		b := make([]byte, 16)
-		rand.Read(b)
-		uuids = append(uuids, hex.EncodeToString(b[:]))
+	if uuid == "" {
+		return "", CommandResult{Ok: false, Error: "no UUID found in AnyTLS inbound"}
 	}
-	// 優先用第一個 UUID
-	uuid := uuids[0]
-	// 生成標準連結: anytls://UUID@server_name:port/?insecure=1#anytls-server_name
+	// 取得本機公網 IP
+	publicIP, err := getPublicIP()
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "cannot get public IP: " + err.Error()}
+	}
+	// 端口默認從 config 讀
+	port2 := 17777
+	if anytls != nil {
+		p, _ := anytls["listen_port"].(float64)
+		if p > 0 {
+			port2 = int(p)
+		}
+	}
+	if port > 0 {
+		port2 = port
+	}
+	host2 := publicIP
+	if host != "" {
+		host2 = host
+	}
 	values := url.Values{"insecure": {"1"}}
-	urlStr := fmt.Sprintf("anytls://%s@%s:%.0f/?%s#anytls-%s",
-		uuid, serverName, port, values.Encode(), serverName)
+	urlStr := fmt.Sprintf("anytls://%s@%s:%d/?%s#anytls-%s", uuid, host2, port2, values.Encode(), host2)
 	return urlStr, CommandResult{Ok: true}
+}
+
+// GetPublicIP 讀取本機公網 IPv4
+func GetPublicIP() (string, CommandResult) {
+	ip, err := getPublicIP()
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: err.Error()}
+	}
+	return ip, CommandResult{Ok: true}
+}
+
+func getPublicIP() (string, error) {
+	// 嘗試多個源
+	sources := []string{
+		"https://ipinfo.io/ip",
+		"https://api.ipify.org",
+		"https://icanhazip.com",
+	}
+	for _, src := range sources {
+		out, err := exec.Command("sh", "-c", fmt.Sprintf("curl -s -m 5 %s", src)).Output()
+		if err != nil {
+			continue
+		}
+		ip := strings.TrimSpace(string(out))
+		if len(ip) > 0 && !strings.HasPrefix(ip, ":") {
+			return ip, nil
+		}
+	}
+	return "", fmt.Errorf("all IP sources failed")
 }

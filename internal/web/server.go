@@ -58,8 +58,10 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Action    string         `json:"action"`
-		Iptables  *IptablesSaveReq `json:"iptables,omitempty"`
+		Action   string           `json:"action"`
+		Host     string           `json:"host"`
+		Port     int              `json:"port"`
+		Iptables *IptablesSaveReq `json:"iptables,omitempty"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 
@@ -134,8 +136,16 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		node := exec.GetAnyTLSNode()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(node)
+	case "nodes-public-ip":
+		ip, result := exec.GetPublicIP()
+		if result.Ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "ip": ip})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
+		}
+		return
 	case "nodes-url":
-		urlStr, result := exec.GenAnyTLSURL()
+		urlStr, result := exec.GenAnyTLSURLWithParams(req.Host, req.Port)
 		if result.Ok {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "url": urlStr})
 		} else {
@@ -249,11 +259,15 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 </div>
 </div>
 <div id="page-nodes" class="page">
-<div id="page-nodes" class="page">
 <h1>節點</h1><p class="subtitle">AnyTLS 一鍵獲取節點</p>
+<div class="status-bar"><span class="status-label">公網 IP</span><span id="pubip" class="status-value">載入中...</span></div>
 <div class="card">
-<div class="card-title">獲取 AnyTLS 節點</div>
-<div class="card-desc">點擊自動讀取端口/UUID/域名，生成 anytls:// 標準節點</div>
+<div class="card-title">AnyTLS 端口</div>
+<div class="card-desc">內網直連填內部端口；有 NAT 端口映射填映射端口</div>
+<table class="config-table">
+<tr><td>內部端口</td><td><input type="number" id="n-port-internal" class="input" placeholder="17777"></td></tr>
+<tr><td>映射端口</td><td><input type="number" id="n-port-mapped" class="input" placeholder="（留空=無 NAT）"></td></tr>
+</table>
 <button class="btn success" onclick="getAnyTLSNode()">獲取節點</button>
 <div id="r-node-link" class="result"></div>
 <div id="r-node-copy" class="copy-row" style="display:none"><div class="copy-box" id="node-box"></div><button class="btn-copy" onclick="copyText(document.getElementById('node-box').textContent)">📋 複製</button></div>
@@ -267,14 +281,15 @@ function show(id,text,ok){const e=document.getElementById(id);e.textContent=text
 function copyText(t){navigator.clipboard&&navigator.clipboard.writeText(t).then(()=>{}).catch(()=>{})}
 async function execAction(action,rid){const b=event.target;b.disabled=true;try{const d=await api(action);if(d.ok)show(rid,'OK\n'+(d.stdout||'')+(d.stderr?'\nstderr: '+d.stderr:''),true);else show(rid,'FAIL\n'+(d.error||'')+(d.stdout?'\n'+d.stdout:'')+(d.stderr?'\nstderr: '+d.stderr:''),false)}catch(e){show(rid,'ERROR: '+e.message,false)}b.disabled=false}
 async function refreshStatus(){try{const d=await api('status');const set=(id,k,f)=>{const e=document.getElementById(id);const v=d[k];e.textContent=f?f(v):(v?'active':'disabled');e.className='status-value '+(v?'on':'off')};set('sb','singbox_running',v=>v?'running '+d.singbox_info:'stopped');set('tun','tun_active');set('tp','tproxy_active');set('net','direct_net');document.getElementById('ts').textContent='updated '+new Date().toLocaleTimeString()}catch(e){document.getElementById('ts').textContent='error: '+e.message}}
-setInterval(refreshStatus,5000);refreshStatus();loadIptablesConfig()
+setInterval(refreshStatus,5000);refreshStatus();loadIptablesConfig();loadPublicIP()
 function iptablesForm(){return{interface:document.getElementById('i-iface').value,tproxy_port:parseInt(document.getElementById('i-port').value)||10808,router_ip:document.getElementById('i-router').value,lan_subnet:document.getElementById('i-lan').value,tproxy_80:document.getElementById('i-tproxy80').checked,tproxy_443:document.getElementById('i-tproxy443').checked,dns_forward:document.getElementById('i-dns').checked,masquerade:document.getElementById('i-masq').checked,forward:document.getElementById('i-fwd').checked,exclude_self:document.getElementById('i-excl').checked}}
 async function iptablesSave(){const c=iptablesForm();const r=await api('iptables-save',{iptables:c});show('r-iptables',(r.ok?'SAVED\n':'FAIL\n')+(r.stdout||r.error||''),r.ok)}
 async function iptablesApply(){const r=await api('iptables-apply');show('r-iptables',(r.ok?'APPLIED\n':'FAIL\n')+(r.stdout||'')+(r.stderr?'stderr: '+r.stderr:''),r.ok);refreshStatus()}
 async function iptablesClear(){const r=await api('iptables-clear');show('r-iptables',(r.ok?'CLEARED\n':'FAIL\n')+(r.stdout||''),r.ok);refreshStatus()}
 async function iptablesRules(){const r=await api('iptables-rules');show('r-iptables','RULES:\n'+(r.stdout||'')+(r.stderr?'stderr: '+r.stderr:''),r.ok)}
 async function loadIptablesConfig(){try{const r=await api('iptables-get');if(r.interface==='enp4s0f0'&&r.tproxy_port===10808&&r.router_ip==='192.168.31.1')return;document.getElementById('i-iface').value=r.interface||'';document.getElementById('i-port').value=r.tproxy_port||'';document.getElementById('i-router').value=r.router_ip||'';document.getElementById('i-lan').value=r.lan_subnet||'';document.getElementById('i-tproxy80').checked=r.tproxy_80||false;document.getElementById('i-tproxy443').checked=r.tproxy_443||false;document.getElementById('i-dns').checked=r.dns_forward||false;document.getElementById('i-masq').checked=r.masquerade||false;document.getElementById('i-fwd').checked=r.forward||false;document.getElementById('i-excl').checked=r.exclude_self||false}catch(e){}}
-async function getAnyTLSNode(){const r=await api('nodes-url');if(r.ok&&r.url){document.getElementById('node-box').textContent=r.url;document.getElementById('r-node-copy').style.display='flex';show('r-node-link','✅ 已生成',true)}else{show('r-node-link','FAIL: '+(r.error||''),false);document.getElementById('r-node-copy').style.display='none'}}
+async function loadPublicIP(){api('nodes-public-ip').then(function(d){if(d.ok)document.getElementById('pubip').textContent=d.ip;else document.getElementById('pubip').textContent='載入失敗'}).catch(function(){document.getElementById('pubip').textContent='載入失敗'})}
+async function getAnyTLSNode(){try{await api('nodes-inbound').then(function(r){if(r.listeners&&r.listeners.length>0){var ls=r.listeners.find(function(x){return x.tag&&x.tag.toLowerCase().indexOf('anytls')>=0});if(ls){var ipv=document.getElementById('n-port-internal').value;var mpv=document.getElementById('n-port-mapped').value;document.getElementById('n-port-internal').value=ls.port;if(!ipv)document.getElementById('n-port-internal').value=ls.port;if(mpv)document.getElementById('n-port-mapped').value=mpv}}}).catch(function(){});}catch(e){}var mapped=document.getElementById('n-port-mapped').value;var internal=document.getElementById('n-port-internal').value;var usePort=mapped?parseInt(mapped):parseInt(internal)||0;const u=await api('nodes-url',{port:usePort});if(u.ok&&u.url){document.getElementById('node-box').textContent=u.url;document.getElementById('r-node-copy').style.display='flex';show('r-node-link','✅ 已生成',true)}else{show('r-node-link','FAIL: '+(u.error||''),false);document.getElementById('r-node-copy').style.display='none'}}
 </script>
 </body>
 </html>`
