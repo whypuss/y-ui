@@ -472,20 +472,36 @@ func TunOn() CommandResult {
 // 同時清理 sing-box 寫入嘅 policy routing rules（9000–9010）同 table 2022，
 // 避免殘留 rule 攔截所有流量去失效嘅 table 2022，令關 TUN 後依然斷網。
 func TunOff() CommandResult {
-	// 殺主進程
-	r := runCommandWithSudo([]string{"pkill", "-f", "sing-box run -c /etc/sing-box/config.json"})
-
+	// 用 systemctl stop（唔會觸發 systemd Restart=always 自動復活）
 	// 清理 sing-box auto_route 殘留嘅 policy routing rules + table 2022
-	// 9000/9001/9002/9003/9010 係 sing-box 自動建立，關 TUN 後必須移除
-	_ = runCommandWithSudo([]string{"sh", "-c", `
-for pref in 9010 9003 9002 9001 9000; do
-	ip rule del pref $pref 2>/dev/null || true
+	var buf bytes.Buffer
+	buf.WriteString(`
+echo "stopping sing-box-main.service (no auto-restart)..."
+systemctl stop sing-box-main.service 2>/dev/null
+sleep 2
+
+# 強制清理 policy routing rules (9000-9010) + flush table 2022
+for p in 9000 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010 2022; do
+    ip rule del priority $p 2>/dev/null || true
 done
 ip route flush table 2022 2>/dev/null || true
-echo "TUN routing rules cleared"
-`})
 
-	_ = r.Rc
+# 強制移除 tun0 接口（如果殘留）
+if ip link show tun0 >/dev/null 2>&1; then
+    ip link del tun0 2>/dev/null || true
+fi
+
+# 驗證
+if ip link show tun0 >/dev/null 2>&1; then
+    echo "WARNING: tun0 still exists"
+else
+    echo "TUN disabled - tun0 removed, rules cleaned"
+fi
+
+# 確認主進程死咗
+ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | wc -l
+`)
+	r := runCommandWithSudo([]string{"sh", "-c", buf.String()})
 	return r
 }
 
