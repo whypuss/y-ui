@@ -593,12 +593,4 @@ func runCommandWithSudo(args []string) CommandResult {
 	return CommandResult{Ok: true, Stdout: stdout.String(), Stderr: stderr.String()}
 }
 
-// ClearIptables 清除 iptables（清除後可能影響 Docker nat，提示用戶）
-func ClearIptables(ctx context.Context) CommandResult {
-	// 腳本已走 runCommandWithSudo，腳本內唔使 sudo
-	script := `iptables -F; iptables -X; iptables -t nat -F; iptables -t nat -X; iptables -t mangle -F; iptables -t mangle -X; iptables -P INPUT ACCEPT; iptables -P FORWARD ACCEPT; iptables -P OUTPUT ACCEPT; echo "iptables cleared (filter+nat+mangle, policies=ACCEPT)"`
-	r := runCommandWithSudo([]string{"sh", "-c", script})
-	_ = ctx
-	return CommandResult{Ok: r.Ok, Stdout: r.Stdout, Stderr: r.Stderr, Error: r.Error}
-}
 

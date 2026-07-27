@@ -123,7 +123,23 @@ iptables -C FORWARD -i "%s" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 	return runCommandWithSudo([]string{"bash", "-c", buf.String()})
 }
 
-// RestoreGateway 恢復網關基礎規則（關閉代理後確保 LAN 設備可直連上網）
+// ClearIptables 只清代理專用規則（mangle TPROXY + nat DNS DNAT），保留網關基礎規則
+func ClearIptables(ctx context.Context) CommandResult {
+	_ = ctx
+	script := `
+echo "=== 只清代理專用規則，保留網關基礎 ==="
+# 清 mangle TPROXY（代理專用）
+iptables -t mangle -F PREROUTING
+# 清 nat PREROUTING（DNS DNAT — 代理配套）
+iptables -t nat -F PREROUTING
+# 移除 ip rule 100（TProxy iproute）
+ip rule del fwmark 0x1/0x1 lookup 100 2>/dev/null || true
+echo "代理規則已清，網關基礎規則保留（FORWARD + MASQUERADE）"
+`
+	return runCommandWithSudo([]string{"sh", "-c", script})
+}
+
+// RestoreGateway 恢復網關基礎規則（保底保險 — 確保 LAN 設備可直連上網）
 func RestoreGateway(iface, lanSubnet string) CommandResult {
 	script := fmt.Sprintf(`
 # 啟用 IP 轉發
