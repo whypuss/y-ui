@@ -36,12 +36,27 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(buildHTML()))
 }
 
+type IptablesSaveReq struct {
+	Interface   string `json:"interface"`
+	TproxyPort  int    `json:"tproxy_port"`
+	RouterIP    string `json:"router_ip"`
+	LANSubnet   string `json:"lan_subnet"`
+	DNSForward  bool   `json:"dns_forward"`
+	Masquerade  bool   `json:"masquerade"`
+	Forward     bool   `json:"forward"`
+	Tproxy80    bool   `json:"tproxy_80"`
+	Tproxy443   bool   `json:"tproxy_443"`
+}
+
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.NotFound(w, r)
 		return
 	}
-	var req struct{ Action string `json:"action"` }
+	var req struct {
+		Action    string         `json:"action"`
+		Iptables  *IptablesSaveReq `json:"iptables,omitempty"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
 
 	var result exec.CommandResult
@@ -59,8 +74,36 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		result = exec.TproxyOn(nil)
 	case "tproxy-off":
 		result = exec.TproxyOff(nil)
+	case "iptables-save":
+		if req.Iptables == nil {
+			w.WriteHeader(400)
+			w.Write([]byte(`{"error":"missing iptables config"}`))
+			return
+		}
+		cfg := exec.IptablesConfig{
+			Interface:   req.Iptables.Interface,
+			TproxyPort:  req.Iptables.TproxyPort,
+			RouterIP:    req.Iptables.RouterIP,
+			LANSubnet:   req.Iptables.LANSubnet,
+			DNSForward:  req.Iptables.DNSForward,
+			Masquerade:  req.Iptables.Masquerade,
+			Forward:     req.Iptables.Forward,
+			Tproxy80:    req.Iptables.Tproxy80,
+			Tproxy443:   req.Iptables.Tproxy443,
+		}
+		result = exec.WriteIptablesConfig(cfg)
+	case "iptables-apply":
+		cfg := exec.ReadIptablesConfig()
+		result = exec.ApplyIptables(nil, cfg)
 	case "iptables-clear":
 		result = exec.ClearIptables(nil)
+	case "iptables-rules":
+		result = exec.IptablesRules()
+	case "iptables-get":
+		cfg := exec.ReadIptablesConfig()
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(cfg)
+		return
 	case "fix-dns":
 		result = exec.FixSingboxDNS(nil)
 	default:
@@ -133,6 +176,14 @@ h1 { text-align: center; margin-bottom: 4px; color: #58a6ff; font-size: 1.6em; }
 .result.ok { color: #3fb950; display: block; }
 .result.err { color: #f85149; display: block; }
 .updating { color: #58a6ff; font-size: 0.72em; text-align: center; margin-top: 4px; }
+.config-table { width: 100%; margin-bottom: 8px; font-size: 0.82em; }
+.config-table td { padding: 4px 2px; color: #8b949e; }
+.config-table td:first-child { color: #58a6ff; white-space: nowrap; }
+.input { background: #0d1117; border: 1px solid #30363d; color: #e1e4e8; padding: 5px 8px; border-radius: 4px; width: 100%; font-size: 0.95em; }
+.input:focus { outline: none; border-color: #58a6ff; }
+.checkbox-group { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.checkbox { display: flex; align-items: center; gap: 4px; background: #0d1117; border: 1px solid #30363d; padding: 5px 8px; border-radius: 4px; font-size: 0.82em; color: #e1e4e8; cursor: pointer; }
+.checkbox input { margin: 0; }
 </style>
 </head>
 <body>
@@ -169,9 +220,27 @@ h1 { text-align: center; margin-bottom: 4px; color: #58a6ff; font-size: 1.6em; }
     <div id="r-tp" class="result"></div>
 </div>
 <div class="card">
-    <div class="card-title">iptables</div>
-    <div class="card-desc">清除所有 iptables 規則</div>
-    <button class="btn danger" onclick="execAction('iptables-clear','r-iptables')">Clear iptables</button>
+    <div class="card-title">iptables 配置</div>
+    <div class="card-desc">填寫參數，勾選規則，按 Apply 生效</div>
+    <table class="config-table">
+        <tr><td>網卡 (IFACE)</td><td><input type="text" id="i-iface" class="input" value="enp4s0f0"></td></tr>
+        <tr><td>TProxy 端口</td><td><input type="number" id="i-port" class="input" value="10808"></td></tr>
+        <tr><td>路由器 IP (DNS)</td><td><input type="text" id="i-router" class="input" value="192.168.31.1"></td></tr>
+        <tr><td>LAN 網段</td><td><input type="text" id="i-lan" class="input" value="192.168.31.0/24"></td></tr>
+    </table>
+    <div class="checkbox-group">
+        <label class="checkbox"><input type="checkbox" id="i-tproxy80" checked> TPROXY :80</label>
+        <label class="checkbox"><input type="checkbox" id="i-tproxy443" checked> TPROXY :443</label>
+        <label class="checkbox"><input type="checkbox" id="i-dns" checked> DNS DNAT 53</label>
+        <label class="checkbox"><input type="checkbox" id="i-masq" checked> MASQUERADE</label>
+        <label class="checkbox"><input type="checkbox" id="i-fwd" checked> FORWARD ACCEPT</label>
+    </div>
+    <div class="btn-group">
+        <button class="btn" onclick="iptablesSave()">保存配置</button>
+        <button class="btn success" onclick="iptablesApply()">Apply</button>
+        <button class="btn" onclick="iptablesRules()">查看規則</button>
+        <button class="btn danger" onclick="iptablesClear()">Clear</button>
+    </div>
     <div id="r-iptables" class="result"></div>
 </div>
 <div class="card">
@@ -181,12 +250,17 @@ h1 { text-align: center; margin-bottom: 4px; color: #58a6ff; font-size: 1.6em; }
     <div id="r-dns" class="result"></div>
 </div>
 <script>
-async function api(action) {
-    const res = await fetch('/api', {
+async function api(action, body) {
+    const payload = { action: action };
+    if (body !== undefined) {
+        Object.assign(payload, body);
+    }
+    const opts = {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action: action})
-    });
+        body: JSON.stringify(payload),
+    };
+    const res = await fetch('/api', opts);
     return res.json();
 }
 function show(id, text, ok) {
@@ -231,6 +305,56 @@ async function refreshStatus() {
 }
 setInterval(refreshStatus, 5000);
 refreshStatus();
+loadIptablesConfig();
+function iptablesForm() {
+    return {
+        interface:   document.getElementById('i-iface').value,
+        tproxy_port: parseInt(document.getElementById('i-port').value) || 10808,
+        router_ip:   document.getElementById('i-router').value,
+        lan_subnet:  document.getElementById('i-lan').value,
+        tproxy_80:   document.getElementById('i-tproxy80').checked,
+        tproxy_443:  document.getElementById('i-tproxy443').checked,
+        dns_forward: document.getElementById('i-dns').checked,
+        masquerade:  document.getElementById('i-masq').checked,
+        forward:     document.getElementById('i-fwd').checked,
+    };
+}
+async function iptablesSave() {
+    const cfg = iptablesForm();
+    const r = await api('iptables-save', { iptables: cfg });
+    show('r-iptables', (r.ok ? 'SAVED\n' : 'FAIL\n') + (r.stdout||r.error||''), r.ok);
+}
+async function iptablesApply() {
+    const r = await api('iptables-apply');
+    show('r-iptables', (r.ok ? 'APPLIED\n' : 'FAIL\n') + (r.stdout||'') + (r.stderr?'stderr: '+r.stderr:''), r.ok);
+    refreshStatus();
+}
+async function iptablesClear() {
+    const r = await api('iptables-clear');
+    show('r-iptables', (r.ok ? 'CLEARED\n' : 'FAIL\n') + (r.stdout||''), r.ok);
+    refreshStatus();
+}
+async function iptablesRules() {
+    const r = await api('iptables-rules');
+    show('r-iptables', 'RULES:\n' + (r.stdout||'') + (r.stderr?'stderr: '+r.stderr:''), r.ok);
+}
+async function loadIptablesConfig() {
+    try {
+        const r = await api('iptables-get');
+        if (!r.interface) return;
+        document.getElementById('i-iface').value = r.interface || '';
+        document.getElementById('i-port').value = r.tproxy_port || '';
+        document.getElementById('i-router').value = r.router_ip || '';
+        document.getElementById('i-lan').value = r.lan_subnet || '';
+        document.getElementById('i-tproxy80').checked = r.tproxy_80 || false;
+        document.getElementById('i-tproxy443').checked = r.tproxy_443 || false;
+        document.getElementById('i-dns').checked = r.dns_forward || false;
+        document.getElementById('i-masq').checked = r.masquerade || false;
+        document.getElementById('i-fwd').checked = r.forward || false;
+    } catch(e) {
+        // 無配置文件，用預設值顯示
+    }
+}
 </script>
 </body>
 </html>`
