@@ -383,7 +383,8 @@ ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head 
 	return r
 }
 
-// TproxyOn 啟用 TProxy
+// TproxyOn 啟用 TProxy（只寫 iptables 規則，不啟動主進程）
+// TProxy 將 LAN 流量重定向到 :10808，需確保 10808 listener 由 TUN 開關控制
 func TproxyOn(ctx context.Context) CommandResult {
 	// 防循環: TUN 開住唔准開 TProxy
 	s := GetSystemStatus()
@@ -393,27 +394,16 @@ func TproxyOn(ctx context.Context) CommandResult {
 
 	_ = ctx
 
-	// 1. 確保主進程運行，10808 listener 在聽（TPROXY 重定向目標）
+	// 確保 10808 listener 在聽（由 TUN 開關控制，唔自己啟主進程）
 	if !checkListenerOnPort(10808) {
-		// 自動啟動主進程（帶 auto_route=false，唔寫 policy rules 擾路由）
-		_ = FixSingboxDNS(ctx)
-		_ = fixSingboxAutoRoute()
-		sm := startMainProcess()
-		if !sm.Ok {
-			return CommandResult{Ok: false, Error: "Failed to start main process: " + sm.Stderr + "\n" + sm.Stdout, Stderr: sm.Stderr, Stdout: sm.Stdout}
-		}
-		// 等 listener 起來
-		time.Sleep(2 * time.Second)
-	}
-	if !checkListenerOnPort(10808) {
-		return CommandResult{Ok: false, Error: "Port 10808 still has no listener after start attempt"}
+		return CommandResult{Ok: false, Error: "No listener on port 10808. Start TUN first to enable the 10808 mixed inbound listener, then enable TProxy."}
 	}
 
-	// 2. 寫入 mangle TPROXY rules + iproute
+	// 寫入 mangle TPROXY rules + iproute
 	script := `/etc/tproxy-rules.sh`
 	r := runCommandWithSudo([]string{"bash", "-c", script})
 
-	// 3. 驗證規則真生效
+	// 驗證規則真生效
 	time.Sleep(500 * time.Millisecond)
 	v := runCommandWithSudo([]string{"sh", "-c", `iptables -t mangle -L PREROUTING -n 2>/dev/null | grep -c TPROXY; ip rule show 2>/dev/null | grep -c "fwmark 0x1" || true`})
 	count := strings.TrimSpace(strings.Fields(v.Stdout)[0])
