@@ -51,6 +51,10 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	case "restart-singbox":
 		result = exec.RestartSingbox(nil)
+	case "tun-on":
+		result = exec.TunOn()
+	case "tun-off":
+		result = exec.TunOff()
 	case "tproxy-on":
 		result = exec.TproxyOn(nil)
 	case "tproxy-off":
@@ -145,6 +149,15 @@ h1 { text-align: center; margin-bottom: 4px; color: #58a6ff; font-size: 1.6em; }
     <div class="card-desc">重啟 sing-box（自動修復 DNS 配置）</div>
     <button class="btn" onclick="execAction('restart-singbox','r-sb')">Restart sing-box</button>
     <div id="r-sb" class="result"></div>
+</div>
+<div class="card">
+    <div class="card-title">TUN</div>
+    <div class="card-desc">開/關 sing-box TUN 主進程（保留 SOCKS 代理）</div>
+    <div class="btn-group">
+        <button class="btn success" onclick="execAction('tun-on','r-tun')">開啟</button>
+        <button class="btn danger" onclick="execAction('tun-off','r-tun')">關閉</button>
+    </div>
+    <div id="r-tun" class="result"></div>
 </div>
 <div class="card">
     <div class="card-title">TProxy</div>

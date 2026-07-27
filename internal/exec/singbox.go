@@ -41,7 +41,7 @@ func TestSudo() error {
 }
 
 // RunCommand 執行指令，自動檢測需要 sudo 的指令
-func RunCommand(ctx context.Context, command string) CommandResult {
+func RunCommand(command string) CommandResult {
 	args := strings.Fields(command)
 	if len(args) == 0 {
 		return CommandResult{Ok: false, Error: "empty command"}
@@ -73,10 +73,7 @@ func RunCommand(ctx context.Context, command string) CommandResult {
 		argsFull = args
 	}
 
-	ctx2, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx2, argsFull[0], argsFull[1:]...)
+	cmd := exec.Command(argsFull[0], argsFull[1:]...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -89,7 +86,7 @@ func RunCommand(ctx context.Context, command string) CommandResult {
 		}
 		// sudo 需要密碼 → 嘗試 SINGBOX_SUDO_PASS
 		if needSudo && rc != 0 {
-			if r := runWithSudoPass(ctx2, argsToRun); r.Ok {
+			if r := runWithSudoPass(context.Background(), argsToRun); r.Ok {
 				return r
 			}
 		}
@@ -111,17 +108,30 @@ func RunCommand(ctx context.Context, command string) CommandResult {
 }
 
 // runWithSudoPass 用密碼執行 sudo
+// readPassword 讀取 sudo 密碼：環境變量 → 文件
+func readPassword() string {
+	p := os.Getenv("SINGBOX_SUDO_PASS")
+	if p == "" {
+		p = os.Getenv("SUDO_PASS")
+	}
+	if p == "" {
+		// 嘗試讀取 /tmp/.yui-pass
+		data, err := os.ReadFile("/tmp/.yui-pass")
+		if err == nil {
+			p = strings.TrimSpace(string(data))
+		}
+	}
+	return p
+}
+
 func runWithSudoPass(ctx context.Context, args []string) CommandResult {
 	if len(args) == 0 {
 		return CommandResult{Ok: false, Error: "empty command"}
 	}
 
-	password := os.Getenv("SINGBOX_SUDO_PASS")
+	password := readPassword()
 	if password == "" {
-		password = os.Getenv("SUDO_PASS")
-	}
-	if password == "" {
-		return CommandResult{Ok: false, Error: "SINGBOX_SUDO_PASS not set"}
+		return CommandResult{Ok: false, Error: "SINGBOX_SUDO_PASS not set (no env var and no /tmp/.yui-pass)"}
 	}
 
 	ctx2, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -305,14 +315,14 @@ func RestartSingbox(ctx context.Context) CommandResult {
 	}
 
 	// 殺舊進程
-	kill := RunCommand(ctx, `ps -o pid= -C sing-box 2>/dev/null | xargs -r kill 2>/dev/null; echo "killed old sing-box"`)
+	kill := RunCommand(`ps -o pid= -C sing-box 2>/dev/null | xargs -r kill 2>/dev/null; echo "killed old sing-box"`)
 	if !kill.Ok {
 		kill.Stdout = "attempted kill\n"
 	}
 
 	// 啟動新進程
 	startCmd := `sleep 2 && nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 & echo "started sing-box" && sleep 3 && ps aux | grep "sing-box run" | grep -v grep | head -1`
-	start := RunCommand(ctx, startCmd)
+	start := RunCommand(startCmd)
 
 	return CommandResult{
 		Ok:     start.Ok,
@@ -384,6 +394,40 @@ echo "TProxy disabled - iptables mangle cleared"
 		Stdout: stdout.String(),
 		Stderr: stderr.String(),
 	}
+}
+
+// TunOn 啟動 sing-box TUN 主進程（帶 TUN）
+func TunOn() CommandResult {
+	// 先修 DNS
+	fix := FixSingboxDNS(context.Background())
+	if !fix.Ok {
+		return CommandResult{Ok: false, Error: "DNS fix failed: " + fix.Error}
+	}
+
+	// 檢查是否已在運行
+	cmd := exec.Command("sh", "-c", `ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | wc -l`)
+	out, _ := cmd.Output()
+	n := strings.TrimSpace(string(out))
+	if n != "0" {
+		return CommandResult{Ok: true, Stdout: "TUN already running"}
+	}
+
+	// 用 sudo 啟動 nohup（背景，不斷 SSH）
+	startCmd := `sudo nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 & sleep 3 && ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head -1`
+	start := RunCommand(startCmd)
+
+	return CommandResult{
+		Ok:     start.Ok,
+		Stdout: "TUN started: " + start.Stdout,
+		Stderr: start.Stderr,
+	}
+}
+
+// TunOff 關閉 sing-box TUN 主進程（保留 SOCKS 代理進程）
+func TunOff() CommandResult {
+	// 只殺 config.json 主進程，保留 jp-proxy / us-proxy 等 SOCKS
+	killCmd := `for pid in $(ps -o pid= -C sing-box 2>/dev/null); do out=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null); case "$out" in *"config.json"*) kill $pid 2>/dev/null; echo "killed PID $pid" ;; esac; done; sleep 1; echo "TUN disabled"; ip link show | grep -E "tun|tproxy" | head -3 || true`
+	return RunCommand(killCmd)
 }
 
 // ClearIptables 清除 iptables
