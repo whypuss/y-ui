@@ -1,9 +1,12 @@
 package exec
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -293,4 +296,69 @@ func getPublicIP() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("all IP sources failed")
+}
+
+// newUUID 生成標準 UUIDv4
+func newUUID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant
+	return fmt.Sprintf("%s-%s-%s-%s-%s",
+		hex.EncodeToString(b[0:4]),
+		hex.EncodeToString(b[4:6]),
+		hex.EncodeToString(b[6:8]),
+		hex.EncodeToString(b[8:10]),
+		hex.EncodeToString(b[10:16]))
+}
+
+// UpdateAnyTLSUUID 生成新 UUID → 寫入 config.json → 重啟 sing-box
+func UpdateAnyTLSUUID() (string, CommandResult) {
+	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "read config.json: " + err.Error()}
+	}
+	var c map[string]interface{}
+	if err := json.Unmarshal(cfgBytes, &c); err != nil {
+		return "", CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
+	}
+	new := newUUID()
+	// 寫入 AnyTLS inbound
+	found := false
+	for i, v := range c["inbounds"].([]interface{}) {
+		if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "anytls" {
+			users, _ := ii["users"].([]interface{})
+			for _, u := range users {
+				if ui, ok := u.(map[string]interface{}); ok {
+					ui["password"] = new
+					found = true
+				}
+			}
+			c["inbounds"].([]interface{})[i] = ii
+			break
+		}
+	}
+	if !found {
+		return "", CommandResult{Ok: false, Error: "no AnyTLS inbound found"}
+	}
+	// 寫回 config.json
+	out, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "marshal config: " + err.Error()}
+	}
+	// 直接寫入 config.json（面板以 root 運行）
+	err = os.WriteFile("/etc/sing-box/config.json", out, 0644)
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "write config.json: " + err.Error()}
+	}
+	// 重啟 sing-box 使生效
+	r := RestartSingbox(nil)
+	if !r.Ok {
+		return "", CommandResult{Ok: false, Error: "restart sing-box failed: " + r.Error}
+	}
+	return new, CommandResult{
+		Ok:     true,
+		Stdout: "UUID updated: " + new + "\n" + r.Stdout,
+		Stderr: r.Stderr,
+	}
 }

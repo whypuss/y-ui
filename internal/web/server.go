@@ -152,6 +152,14 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
 		}
 		return
+	case "nodes-update-uuid":
+		newUUID, result := exec.UpdateAnyTLSUUID()
+		if result.Ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "uuid": newUUID, "stdout": result.Stdout})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
+		}
+		return
 	default:
 		w.WriteHeader(400)
 		w.Write([]byte(`{"error":"unknown action"}`))
@@ -268,7 +276,7 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 <tr><td>內部端口</td><td><input type="number" id="n-port-internal" class="input" placeholder="17777"></td></tr>
 <tr><td>映射端口</td><td><input type="number" id="n-port-mapped" class="input" placeholder="（留空=無 NAT）"></td></tr>
 </table>
-<button class="btn success" onclick="getAnyTLSNode()">獲取節點</button>
+<div class="btn-group"><button class="btn success" onclick="getAnyTLSNode()">獲取節點</button><button class="btn warning" onclick="updateUUID()">更新 UUID</button></div>
 <div id="r-node-link" class="result"></div>
 <div id="r-node-copy" class="copy-row" style="display:none"><div class="copy-box" id="node-box"></div><button class="btn-copy" onclick="copyText(document.getElementById('node-box').textContent)">📋 複製</button></div>
 </div>
@@ -290,6 +298,7 @@ async function iptablesRules(){const r=await api('iptables-rules');show('r-iptab
 async function loadIptablesConfig(){try{const r=await api('iptables-get');if(r.interface==='enp4s0f0'&&r.tproxy_port===10808&&r.router_ip==='192.168.31.1')return;document.getElementById('i-iface').value=r.interface||'';document.getElementById('i-port').value=r.tproxy_port||'';document.getElementById('i-router').value=r.router_ip||'';document.getElementById('i-lan').value=r.lan_subnet||'';document.getElementById('i-tproxy80').checked=r.tproxy_80||false;document.getElementById('i-tproxy443').checked=r.tproxy_443||false;document.getElementById('i-dns').checked=r.dns_forward||false;document.getElementById('i-masq').checked=r.masquerade||false;document.getElementById('i-fwd').checked=r.forward||false;document.getElementById('i-excl').checked=r.exclude_self||false}catch(e){}}
 async function loadPublicIP(){api('nodes-public-ip').then(function(d){if(d.ok)document.getElementById('pubip').textContent=d.ip;else document.getElementById('pubip').textContent='載入失敗'}).catch(function(){document.getElementById('pubip').textContent='載入失敗'})}
 async function getAnyTLSNode(){try{await api('nodes-inbound').then(function(r){if(r.listeners&&r.listeners.length>0){var ls=r.listeners.find(function(x){return x.tag&&x.tag.toLowerCase().indexOf('anytls')>=0});if(ls){var ipv=document.getElementById('n-port-internal').value;var mpv=document.getElementById('n-port-mapped').value;document.getElementById('n-port-internal').value=ls.port;if(!ipv)document.getElementById('n-port-internal').value=ls.port;if(mpv)document.getElementById('n-port-mapped').value=mpv}}}).catch(function(){});}catch(e){}var mapped=document.getElementById('n-port-mapped').value;var internal=document.getElementById('n-port-internal').value;var usePort=mapped?parseInt(mapped):parseInt(internal)||0;const u=await api('nodes-url',{port:usePort});if(u.ok&&u.url){document.getElementById('node-box').textContent=u.url;document.getElementById('r-node-copy').style.display='flex';show('r-node-link','✅ 已生成',true)}else{show('r-node-link','FAIL: '+(u.error||''),false);document.getElementById('r-node-copy').style.display='none'}}
+async function updateUUID(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-uuid');if(r.ok){show('r-node-link','✅ UUID 已更新\n'+r.stdout,true);b.disabled=false}else{show('r-node-link','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-node-link','ERROR: '+e.message,false);b.disabled=false}}
 </script>
 </body>
 </html>`
