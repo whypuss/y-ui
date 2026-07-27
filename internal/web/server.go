@@ -263,9 +263,27 @@ async function iptablesClear(){const r=await api('iptables-clear');show('r-iptab
 async function iptablesRules(){const r=await api('iptables-rules');show('r-iptables','RULES:\n'+(r.stdout||'')+(r.stderr?'stderr: '+r.stderr:''),r.ok)}
 async function loadIptablesConfig(){try{const r=await api('iptables-get');if(r.interface==='enp4s0f0'&&r.tproxy_port===10808&&r.router_ip==='192.168.31.1')return;document.getElementById('i-iface').value=r.interface||'';document.getElementById('i-port').value=r.tproxy_port||'';document.getElementById('i-router').value=r.router_ip||'';document.getElementById('i-lan').value=r.lan_subnet||'';document.getElementById('i-tproxy80').checked=r.tproxy_80||false;document.getElementById('i-tproxy443').checked=r.tproxy_443||false;document.getElementById('i-dns').checked=r.dns_forward||false;document.getElementById('i-masq').checked=r.masquerade||false;document.getElementById('i-fwd').checked=r.forward||false;document.getElementById('i-excl').checked=r.exclude_self||false}catch(e){}}
 async function loadNodes(){
-try{const ls=await api('nodes-inbound');const t=document.getElementById('listener-table');t.innerHTML='<tr><th>端口</th><th>類型</th><th>Tag</th><th>TLS</th></tr>';if(ls.error){document.getElementById('r-listeners').textContent=ls.error;document.getElementById('r-listeners').style.display='block'}else{ls.listeners.forEach(l=>{const c=l.type==='anytls'?'anytls':l.type==='vless'?'vless':l.type==='socks'?'socks':l.type==='mixed'?'mixed':'other';t.innerHTML+='<tr><td class="port">'+l.port+'</td><td class="proto proto-'+c+'">'+l.type+'</td><td class="tag">'+l.tag+'</td><td>'+l.tls+'</td></tr>'})}}}catch(e){}
-try{const ns=await api('nodes-list');const t=document.getElementById('node-table');t.innerHTML='<tr><th>協議</th><th>Tag</th><th>Server</th><th>端口</th><th>Server Name</th></tr>';if(ns&&ns.length>0){ns.forEach(n=>{const c=n.type==='anytls'?'anytls':n.type==='vless'?'vless':n.type==='socks'?'socks':n.type==='mixed'?'mixed':'other';t.innerHTML+='<tr><td class="proto proto-'+c+'">'+(n.protocol||n.type)+'</td><td class="tag">'+n.tag+'</td><td>'+n.server+'</td><td class="port">'+n.port+'</td><td>'+n.server_name+'</td></tr>'})}}}catch(e){}
-try{const a=await api('anytls-node');const e=document.getElementById('anytls-detail');if(a.server){const d='類型: AnyTLS\nServer: '+a.server+'\n端口: '+a.port+'\nTLS SN: '+a.server_name+'\nTag: '+a.tag;const cp=a.server+':'+a.port;e.innerHTML='<div style="color:#58a6ff;margin-bottom:4px">'+d.replace(/\n/g,'<br>')+'</div><div class="copy-row"><div class="copy-box">'+cp+'</div><button class="btn-copy" onclick="copyText(''+cp+'')">📋 複製</button></div>'}else{e.innerHTML='無 AnyTLS 節點配置'}}}catch(e){document.getElementById('anytls-detail').textContent='載入失敗'}
+await api('nodes-inbound').then(function(ls){
+var t=document.getElementById('listener-table');t.innerHTML='<tr><th>端口</th><th>類型</th><th>Tag</th><th>TLS</th></tr>';
+if(ls.error){var e=document.getElementById('r-listeners');e.textContent=ls.error;e.style.display='block';return;}
+ls.listeners.forEach(function(l){
+var c=l.type==='anytls'?'anytls':l.type==='vless'?'vless':l.type==='socks'?'socks':l.type==='mixed'?'mixed':'other';
+t.innerHTML+='<tr><td class="port">'+l.port+'</td><td class="proto proto-'+c+'">'+l.type+'</td><td class="tag">'+l.tag+'</td><td>'+l.tls+'</td></tr>';
+});
+}).catch(function(){});
+await api('nodes-list').then(function(ns){
+var t=document.getElementById('node-table');t.innerHTML='<tr><th>協議</th><th>Tag</th><th>Server</th><th>端口</th><th>Server Name</th></tr>';
+if(ns&&ns.length>0){ns.forEach(function(n){
+var c=n.type==='anytls'?'anytls':n.type==='vless'?'vless':n.type==='socks'?'socks':n.type==='mixed'?'mixed':'other';
+t.innerHTML+='<tr><td class="proto proto-'+c+'">'+(n.protocol||n.type)+'</td><td class="tag">'+n.tag+'</td><td>'+n.server+'</td><td class="port">'+n.port+'</td><td>'+n.server_name+'</td></tr>';
+});}
+}).catch(function(){});
+await api('anytls-node').then(function(a){
+var e=document.getElementById('anytls-detail');
+if(a.server){var d='類型: AnyTLS\\nServer: '+a.server+'\\n端口: '+a.port+'\\nTLS SN: '+a.server_name+'\\nTag: '+a.tag;var cp=a.server+':'+a.port;
+e.innerHTML='<div style="color:#58a6ff;margin-bottom:4px">'+d.replace(/\\n/g,'<br>')+'</div><div class="copy-row"><div class="copy-box">'+cp+'</div><button class="btn-copy" onclick="copyText(\''+cp+'\')">📋 複製</button></div>';}
+else{e.innerHTML='無 AnyTLS 節點配置';}
+}).catch(function(){document.getElementById('anytls-detail').textContent='載入失敗'});
 }
 </script>
 </body>
