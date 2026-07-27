@@ -246,9 +246,11 @@ func checkTun() (bool, string) {
 }
 
 func checkTproxy() bool {
-	cmd := exec.Command("sh", "-c", `ss -tlnp 2>/dev/null | grep 10808 | head -1`)
+	// 檢查 iproute TPROXY rule (fwmark 0x1 → table 100)，唔需要 sudo
+	cmd := exec.Command("sh", "-c", `ip rule show 2>/dev/null | grep -c "fwmark 0x1/0x1 lookup 100"`)
 	out, _ := cmd.Output()
-	return len(strings.TrimSpace(string(out))) > 0
+	n := strings.TrimSpace(string(out))
+	return n != "0"
 }
 
 func checkDirectNet() bool {
@@ -312,97 +314,78 @@ PYEOF
 func RestartSingbox(ctx context.Context) CommandResult {
 	fix := FixSingboxDNS(ctx)
 	if !fix.Ok {
-		return CommandResult{
-			Ok:    false,
-			Error: "DNS fix failed: " + fix.Error,
-		}
+		return CommandResult{Ok: false, Error: "DNS fix failed: " + fix.Error}
 	}
 
-	// 殺舊進程
-	kill := RunCommand(`ps -o pid= -C sing-box 2>/dev/null | xargs -r kill 2>/dev/null; echo "killed old sing-box"`)
-	if !kill.Ok {
-		kill.Stdout = "attempted kill\n"
-	}
+	// 殺所有舊 sing-box（需要 sudo）
+	kill := runCommandWithSudo([]string{"sh", "-c", `ps -o pid= -C sing-box 2>/dev/null | xargs -r kill 2>/dev/null; sleep 1; echo "killed old sing-box"`})
 
-	// 啟動新進程
-	startCmd := `sleep 2 && nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 & echo "started sing-box" && sleep 3 && ps aux | grep "sing-box run" | grep -v grep | head -1`
-	start := RunCommand(startCmd)
+	// 啟動新進程（需要 sudo）
+	startScript := `sleep 2 && nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 & echo "started sing-box" && sleep 4 && ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head -1`
+	start := runCommandWithSudo([]string{"sh", "-c", startScript})
 
 	return CommandResult{
 		Ok:     start.Ok,
 		Stdout: fix.Stdout + "\n" + kill.Stdout + "\n" + start.Stdout,
-		Stderr: fix.Stderr + "\n" + start.Stderr,
+		Stderr: fix.Stderr + "\n" + kill.Stderr + "\n" + start.Stderr,
 	}
 }
 
 // TproxyOn 啟用 TProxy
 func TproxyOn(ctx context.Context) CommandResult {
-	script := `
-if [ -x "/etc/tproxy-rules.sh" ]; then
-    sudo bash "/etc/tproxy-rules.sh"
-    echo "TProxy enabled via /etc/tproxy-rules.sh"
-elif [ -f "/etc/tproxy-rules.sh" ]; then
-    sudo bash "/etc/tproxy-rules.sh"
-    echo "TProxy enabled via /etc/tproxy-rules.sh"
-else
-    sudo iptables -t mangle -A PREROUTING -p tcp -j TPROXY --tproxy-mark 0x1/0x1 --on-port 10808
-    echo "TProxy enabled via fallback rules"
-fi
-`
-	cmd := exec.Command("sh", "-c", script)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	// 防循環: TUN 開住唔准開 TProxy
+	s := GetSystemStatus()
+	if s.TunActive {
+		return CommandResult{Ok: false, Error: "TUN is active — disable TUN before enabling TProxy (mutually exclusive)"}
+	}
 
+	_ = ctx
 
-	err := cmd.Run()
-	if err != nil {
-		return CommandResult{
-			Ok:     false,
-			Stdout: stdout.String(),
-			Stderr: stderr.String(),
-			Error:  fmt.Sprintf("tproxy on failed: %s", err.Error()),
+	// 先確保 config.json 主進程未運行（避免 TUN/TProxy 雙開）
+	if s.SingboxRunning {
+		// 檢查係咪 config.json 主進程
+		cmd := exec.Command("sh", "-c", `ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | wc -l`)
+		out, _ := cmd.Output()
+		if strings.TrimSpace(string(out)) != "0" {
+			TunOff()
 		}
 	}
-	return CommandResult{
-		Ok:     true,
-		Stdout: stdout.String(),
-		Stderr: stderr.String(),
+
+	script := `/etc/tproxy-rules.sh`
+	r := runCommandWithSudo([]string{"bash", "-c", script})
+
+	// 驗證規則真生效（需要 sudo 看 mangle）
+	time.Sleep(500 * time.Millisecond)
+	v := runCommandWithSudo([]string{"sh", "-c", `iptables -t mangle -L PREROUTING -n 2>/dev/null | grep -c TPROXY; ip rule show 2>/dev/null | grep -c "fwmark 0x1" || true`})
+	count := strings.TrimSpace(strings.Fields(v.Stdout)[0])
+
+	if !r.Ok {
+		return CommandResult{Ok: false, Stdout: r.Stdout, Stderr: r.Stderr, Error: "tproxy-rules.sh failed"}
 	}
+	if count == "0" {
+		return CommandResult{Ok: true, Stdout: r.Stdout, Stderr: r.Stderr + "\n[WARN] TPROXY rules not found in mangle — may need manual config"}
+	}
+
+	_ = ctx
+	return CommandResult{Ok: true, Stdout: r.Stdout + fmt.Sprintf("\n[VERIFY] %s TPROXY rule(s) active", count), Stderr: r.Stderr}
 }
 
 // TproxyOff 關閉 TProxy
 func TproxyOff(ctx context.Context) CommandResult {
-	script := `
-sudo iptables -t mangle -F
-sudo ip6tables -t mangle -F
-echo "TProxy disabled - iptables mangle cleared"
-`
-	cmd := exec.Command("sh", "-c", script)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-
-	err := cmd.Run()
-	if err != nil {
-		return CommandResult{
-			Ok:     false,
-			Stdout: stdout.String(),
-			Stderr: stderr.String(),
-			Error:  fmt.Sprintf("tproxy off failed: %s", err.Error()),
-		}
-	}
-	return CommandResult{
-		Ok:     true,
-		Stdout: stdout.String(),
-		Stderr: stderr.String(),
-	}
+	// 清理 mangle + 移除 iproute TPROXY rule
+	script := `iptables -t mangle -F; ip6tables -t mangle -F 2>/dev/null; ip rule del fwmark 0x1/0x1 lookup 100 2>/dev/null; ip route del local 0.0.0.0/0 dev lo table 100 2>/dev/null; echo "TProxy disabled - mangle cleared, iproute rules removed"`
+	r := runCommandWithSudo([]string{"sh", "-c", script})
+	_ = ctx
+	return r
 }
 
 // TunOn 啟動 sing-box TUN 主進程（帶 TUN）
 func TunOn() CommandResult {
-	// 先修 DNS
+	// 防循環: TProxy 開住唔准開 TUN
+	s := GetSystemStatus()
+	if s.TproxyActive {
+		return CommandResult{Ok: false, Error: "TProxy is active — disable TProxy before enabling TUN (mutually exclusive)"}
+	}
 	fix := FixSingboxDNS(context.Background())
 	if !fix.Ok {
 		return CommandResult{Ok: false, Error: "DNS fix failed: " + fix.Error}
@@ -439,15 +422,13 @@ func runCommandWithSudo(args []string) CommandResult {
 		return CommandResult{Ok: false, Error: "empty args"}
 	}
 	var stdout, stderr bytes.Buffer
-	// 先試無密碼 sudo
 	cmdArgs := append([]string{"-n"}, args...)
 	cmd := exec.Command("sudo", cmdArgs...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err == nil {
-		return CommandResult{Ok: true, Stdout: stdout.String() + "\nTUN disabled", Stderr: stderr.String()}
+		return CommandResult{Ok: true, Stdout: stdout.String(), Stderr: stderr.String()}
 	}
-	// 失敗 → 用密碼
 	password := readPassword()
 	if password == "" {
 		return CommandResult{Ok: false, Error: "sudo failed + no SINGBOX_SUDO_PASS"}
@@ -462,48 +443,20 @@ func runCommandWithSudo(args []string) CommandResult {
 		pw.Close()
 	}()
 	if err := cmd.Run(); err != nil {
-		// pkill 無進程可殺會 exit 1，亦算成功
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return CommandResult{Ok: true, Stdout: "TUN disabled (no process found)", Stderr: stderr.String()}
+			return CommandResult{Ok: true, Stdout: stdout.String(), Stderr: stderr.String()}
 		}
-		return CommandResult{Ok: false, Stderr: stderr.String(), Error: "sudo pkill failed: " + err.Error()}
+		return CommandResult{Ok: false, Stderr: stderr.String(), Error: "sudo command failed: " + err.Error()}
 	}
-	return CommandResult{Ok: true, Stdout: stdout.String() + "\nTUN disabled", Stderr: stderr.String()}
+	return CommandResult{Ok: true, Stdout: stdout.String(), Stderr: stderr.String()}
 }
 
-// ClearIptables 清除 iptables
+// ClearIptables 清除 iptables（清除後可能影響 Docker nat，提示用戶）
 func ClearIptables(ctx context.Context) CommandResult {
-	script := `
-sudo iptables -F
-sudo iptables -X
-sudo iptables -t nat -F
-sudo iptables -t nat -X
-sudo iptables -t mangle -F
-sudo iptables -t mangle -X
-sudo iptables -P INPUT ACCEPT
-sudo iptables -P FORWARD ACCEPT
-sudo iptables -P OUTPUT ACCEPT
-echo "iptables cleared"
-`
-	cmd := exec.Command("sh", "-c", script)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-
-	err := cmd.Run()
-	if err != nil {
-		return CommandResult{
-			Ok:     false,
-			Stdout: stdout.String(),
-			Stderr: stderr.String(),
-			Error:  fmt.Sprintf("iptables clear failed: %s", err.Error()),
-		}
-	}
-	return CommandResult{
-		Ok:     true,
-		Stdout: stdout.String(),
-		Stderr: stderr.String(),
-	}
+	// 腳本已走 runCommandWithSudo，腳本內唔使 sudo
+	script := `iptables -F; iptables -X; iptables -t nat -F; iptables -t nat -X; iptables -t mangle -F; iptables -t mangle -X; iptables -P INPUT ACCEPT; iptables -P FORWARD ACCEPT; iptables -P OUTPUT ACCEPT; echo "iptables cleared (filter+nat+mangle, policies=ACCEPT)"`
+	r := runCommandWithSudo([]string{"sh", "-c", script})
+	_ = ctx
+	return CommandResult{Ok: r.Ok, Stdout: r.Stdout, Stderr: r.Stderr, Error: r.Error}
 }
 
