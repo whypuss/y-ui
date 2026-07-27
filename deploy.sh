@@ -1,15 +1,21 @@
 #!/bin/bash
 # deploy.sh - 部署控制面板到 VPS
 # 用法: bash deploy.sh
-# 面板端口: 19999
-# 访问: http://<VPS_IP>:19999/
+# 環境變量: VPS_HOST VPS_USER VPS_PASS REMOTE_DIR PANEL_PORT
+# 默认: VPS_HOST=192.168.31.55 VPS_USER=maxwell REMOTE_DIR=/opt/singbox-panel PANEL_PORT=19999
 set -e
 
-VPS_HOST="192.168.31.55"
-VPS_USER="maxwell"
-VPS_PASS="qwerty66"
-REMOTE_DIR="/opt/singbox-panel"
-PORT="19999"
+VPS_HOST="${VPS_HOST:-192.168.31.55}"
+VPS_USER="${VPS_USER:-maxwell}"
+VPS_PASS="${VPS_PASS:-}"
+REMOTE_DIR="${REMOTE_DIR:-/opt/singbox-panel}"
+PORT="${PANEL_PORT:-19999}"
+
+if [ -z "$VPS_PASS" ]; then
+    echo "ERROR: VPS_PASS not set. Source .env or export VPS_PASS=xxx"
+    echo "Example: source ~/.hermes/profiles/puss_profile/.env"
+    exit 1
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -20,28 +26,23 @@ echo "目标: $VPS_USER@$VPS_HOST:$REMOTE_DIR"
 TMP_ARCHIVE="/tmp/singbox-panel.tar.gz"
 tar -czf "$TMP_ARCHIVE" -C "$SCRIPT_DIR" .
 
-# 2. 用 Docker alpine 传输
-echo "传输文件..."
-SSH_AUTH_SOCK="" sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$VPS_USER@$VPS_HOST" \
-    "sudo mkdir -p $REMOTE_DIR && docker run --rm -v $REMOTE_DIR:/target alpine sh -c 'cat /dev/stdin > /target/deploy.tar.gz' < /dev/null" 2>/dev/null || true
-
-# 用 sshpass + base64 传输 tarball
+# 2. 用 sshpass + base64 传输
 echo "[$(basename "$TMP_ARCHIVE")] 大小: $(du -h "$TMP_ARCHIVE" | cut -f1)"
-B64=$(base64 "$TMP_ARCHIVE")
 echo "传输中..."
 
+B64=$(base64 "$TMP_ARCHIVE")
 sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$VPS_USER@$VPS_HOST" \
-    "mkdir -p $REMOTE_DIR && echo $B64 | base64 -d | tar -xzf - -C $REMOTE_DIR && echo TRANSMIT_OK"
+    "mkdir -p $REMOTE_DIR && echo '$B64' | base64 -d | tar -xzf - -C $REMOTE_DIR && echo TRANSMIT_OK"
 
 # 3. 确认
 echo "部署文件列表:"
 sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$VPS_USER@$VPS_HOST" \
     "ls -la $REMOTE_DIR"
 
-# 4. 启动面板 (用 sudo 后台运行)
+# 4. 启动面板
 echo "启动面板 (端口 $PORT)..."
 sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$VPS_USER@$VPS_HOST" \
-    "sudo nohup python3 $REMOTE_DIR/panel.py > $REMOTE_DIR/panel.log 2>&1 & echo PID=\$!"
+    "export SINGBOX_SUDO_PASS='$VPS_PASS' && SINGBOX_PANEL_PORT=$PORT PIPX_HOME=/opt/pipx SUDO_ASKPASS='/opt/singbox-panel/sshpass-cmd' sudo -S nohup python3 $REMOTE_DIR/panel.py > $REMOTE_DIR/panel.log 2>&1 & echo PID=\$!"
 
 sleep 2
 
@@ -56,5 +57,4 @@ echo "访问: http://$VPS_HOST:$PORT/"
 echo "日志: $REMOTE_DIR/panel.log"
 echo "停止: sudo kill \$(cat $REMOTE_DIR/panel.pid)"
 
-# 清理
 rm -f "$TMP_ARCHIVE"
