@@ -46,6 +46,7 @@ type IptablesSaveReq struct {
 	Forward     bool   `json:"forward"`
 	Tproxy80    bool   `json:"tproxy_80"`
 	Tproxy443   bool   `json:"tproxy_443"`
+	ExcludeSelf bool   `json:"exclude_self"`
 }
 
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +91,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			Forward:     req.Iptables.Forward,
 			Tproxy80:    req.Iptables.Tproxy80,
 			Tproxy443:   req.Iptables.Tproxy443,
+			ExcludeSelf: req.Iptables.ExcludeSelf,
 		}
 		result = exec.WriteIptablesConfig(cfg)
 	case "iptables-apply":
@@ -234,6 +236,7 @@ h1 { text-align: center; margin-bottom: 4px; color: #58a6ff; font-size: 1.6em; }
         <label class="checkbox"><input type="checkbox" id="i-dns" checked> DNS DNAT 53</label>
         <label class="checkbox"><input type="checkbox" id="i-masq" checked> MASQUERADE</label>
         <label class="checkbox"><input type="checkbox" id="i-fwd" checked> FORWARD ACCEPT</label>
+        <label class="checkbox"><input type="checkbox" id="i-excl" checked> 排除本機流量（防循環）</label>
     </div>
     <div class="btn-group">
         <button class="btn" onclick="iptablesSave()">保存配置</button>
@@ -308,15 +311,16 @@ refreshStatus();
 loadIptablesConfig();
 function iptablesForm() {
     return {
-        interface:   document.getElementById('i-iface').value,
-        tproxy_port: parseInt(document.getElementById('i-port').value) || 10808,
-        router_ip:   document.getElementById('i-router').value,
-        lan_subnet:  document.getElementById('i-lan').value,
-        tproxy_80:   document.getElementById('i-tproxy80').checked,
-        tproxy_443:  document.getElementById('i-tproxy443').checked,
-        dns_forward: document.getElementById('i-dns').checked,
-        masquerade:  document.getElementById('i-masq').checked,
-        forward:     document.getElementById('i-fwd').checked,
+        interface:     document.getElementById('i-iface').value,
+        tproxy_port:   parseInt(document.getElementById('i-port').value) || 10808,
+        router_ip:     document.getElementById('i-router').value,
+        lan_subnet:    document.getElementById('i-lan').value,
+        tproxy_80:     document.getElementById('i-tproxy80').checked,
+        tproxy_443:    document.getElementById('i-tproxy443').checked,
+        dns_forward:   document.getElementById('i-dns').checked,
+        masquerade:    document.getElementById('i-masq').checked,
+        forward:       document.getElementById('i-fwd').checked,
+        exclude_self:  document.getElementById('i-excl').checked,
     };
 }
 async function iptablesSave() {
@@ -351,6 +355,7 @@ async function loadIptablesConfig() {
         document.getElementById('i-dns').checked = r.dns_forward || false;
         document.getElementById('i-masq').checked = r.masquerade || false;
         document.getElementById('i-fwd').checked = r.forward || false;
+        document.getElementById('i-excl').checked = r.exclude_self || false;
     } catch(e) {
         // 無配置文件，用預設值顯示
     }

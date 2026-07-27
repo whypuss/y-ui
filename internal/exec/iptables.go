@@ -21,6 +21,7 @@ type IptablesConfig struct {
 	Forward      bool   `json:"forward"`       // FORWARD ACCEPT
 	Tproxy80     bool   `json:"tproxy_80"`     // TPROXY TCP 80
 	Tproxy443    bool   `json:"tproxy_443"`    // TPROXY TCP 443
+	ExcludeSelf  bool   `json:"exclude_self"`  // 排除本機流量，防止 TPROXY 循環
 }
 
 // ReadIptablesConfig 讀取 iptables 配置
@@ -69,11 +70,23 @@ func ApplyIptables(ctx context.Context, cfg IptablesConfig) CommandResult {
 	buf.WriteString(fmt.Sprintf("ROUTER_IP=\"%s\"\n", cfg.RouterIP))
 	buf.WriteString("\n")
 
+	// 自動取得本機 IP（來自指定網卡）
+	buf.WriteString(`MY_IP=$(ip route get 1.2.3.4 dev "$IFACE" | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)
+echo "MY_IP=$MY_IP"
+`)
+
 	// iproute table 100（僅當 TPROXY 開啟時）
 	if cfg.Tproxy80 || cfg.Tproxy443 {
 		buf.WriteString(`ip rule del fwmark 0x1/0x1 lookup 100 2>/dev/null || true
 ip rule add fwmark 0x1/0x1 lookup 100
 ip route add local 0.0.0.0/0 dev lo table 100 2>/dev/null || true
+`)
+	}
+
+	// 排除本機流量（插入 PREROUTING 第一位，防止 TPROXY 循環）
+	if cfg.ExcludeSelf {
+		buf.WriteString(`# 本機流量不經 TPROXY（防循環）
+iptables -t mangle -C PREROUTING 1 -s "$MY_IP" -j ACCEPT 2>/dev/null || iptables -t mangle -I PREROUTING 1 -s "$MY_IP" -j ACCEPT
 `)
 	}
 
