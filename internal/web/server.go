@@ -134,6 +134,13 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		node := exec.GetAnyTLSNode()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(node)
+	case "nodes-url":
+		urlStr, result := exec.GenAnyTLSURL()
+		if result.Ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "url": urlStr})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
+		}
 		return
 	default:
 		w.WriteHeader(400)
@@ -242,14 +249,19 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 </div>
 </div>
 <div id="page-nodes" class="page">
-<h1>節點</h1><p class="subtitle">查看 sing-box 監聽端口與外網出節點</p>
-<div class="card"><div class="card-title">Local Listeners</div><div class="card-desc">sing-box config.json 入 face 監聽端口</div><table class="node-table" id="listener-table"><tr><th>端口</th><th>類型</th><th>Tag</th><th>TLS</th></tr></table><div id="r-listeners" class="result"></div></div>
-<div class="card"><div class="card-title">外網出節點</div><div class="card-desc">us-proxy / jp-proxy outbound 列表</div><table class="node-table" id="node-table"><tr><th>協議</th><th>Tag</th><th>Server</th><th>端口</th><th>Server Name</th></tr></table><div id="r-nodes" class="result"></div></div>
-<div class="card"><div class="card-title">AnyTLS 節點</div><div class="card-desc">當前 AnyTLS outbound 配置（一鍵複製）</div><div id="anytls-detail" class="result ok" style="display:block;color:#8b949e">載入中...</div></div>
+<div id="page-nodes" class="page">
+<h1>節點</h1><p class="subtitle">AnyTLS 一鍵獲取節點</p>
+<div class="card">
+<div class="card-title">獲取 AnyTLS 節點</div>
+<div class="card-desc">點擊自動讀取端口/UUID/域名，生成 anytls:// 標準節點</div>
+<button class="btn success" onclick="getAnyTLSNode()">獲取節點</button>
+<div id="r-node-link" class="result"></div>
+<div id="r-node-copy" class="copy-row" style="display:none"><div class="copy-box" id="node-box"></div><button class="btn-copy" onclick="copyText(document.getElementById('node-box').textContent)">📋 複製</button></div>
+</div>
 </div>
 </div>
 <script>
-function showPage(name,el){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.getElementById('page-'+name).classList.add('active');document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active');if(name==='nodes')loadNodes()}
+function showPage(name,el){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.getElementById('page-'+name).classList.add('active');document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active')}
 async function api(action,body){const p={action};if(body!==undefined)Object.assign(p,body);const r=await fetch('/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});return r.json()}
 function show(id,text,ok){const e=document.getElementById(id);e.textContent=text;e.className='result '+(ok?'ok':'err')}
 function copyText(t){navigator.clipboard&&navigator.clipboard.writeText(t).then(()=>{}).catch(()=>{})}
@@ -262,29 +274,7 @@ async function iptablesApply(){const r=await api('iptables-apply');show('r-iptab
 async function iptablesClear(){const r=await api('iptables-clear');show('r-iptables',(r.ok?'CLEARED\n':'FAIL\n')+(r.stdout||''),r.ok);refreshStatus()}
 async function iptablesRules(){const r=await api('iptables-rules');show('r-iptables','RULES:\n'+(r.stdout||'')+(r.stderr?'stderr: '+r.stderr:''),r.ok)}
 async function loadIptablesConfig(){try{const r=await api('iptables-get');if(r.interface==='enp4s0f0'&&r.tproxy_port===10808&&r.router_ip==='192.168.31.1')return;document.getElementById('i-iface').value=r.interface||'';document.getElementById('i-port').value=r.tproxy_port||'';document.getElementById('i-router').value=r.router_ip||'';document.getElementById('i-lan').value=r.lan_subnet||'';document.getElementById('i-tproxy80').checked=r.tproxy_80||false;document.getElementById('i-tproxy443').checked=r.tproxy_443||false;document.getElementById('i-dns').checked=r.dns_forward||false;document.getElementById('i-masq').checked=r.masquerade||false;document.getElementById('i-fwd').checked=r.forward||false;document.getElementById('i-excl').checked=r.exclude_self||false}catch(e){}}
-async function loadNodes(){
-await api('nodes-inbound').then(function(ls){
-var t=document.getElementById('listener-table');t.innerHTML='<tr><th>端口</th><th>類型</th><th>Tag</th><th>TLS</th></tr>';
-if(ls.error){var e=document.getElementById('r-listeners');e.textContent=ls.error;e.style.display='block';return;}
-ls.listeners.forEach(function(l){
-var c=l.type==='anytls'?'anytls':l.type==='vless'?'vless':l.type==='socks'?'socks':l.type==='mixed'?'mixed':'other';
-t.innerHTML+='<tr><td class="port">'+l.port+'</td><td class="proto proto-'+c+'">'+l.type+'</td><td class="tag">'+l.tag+'</td><td>'+l.tls+'</td></tr>';
-});
-}).catch(function(){});
-await api('nodes-list').then(function(ns){
-var t=document.getElementById('node-table');t.innerHTML='<tr><th>協議</th><th>Tag</th><th>Server</th><th>端口</th><th>Server Name</th></tr>';
-if(ns&&ns.length>0){ns.forEach(function(n){
-var c=n.type==='anytls'?'anytls':n.type==='vless'?'vless':n.type==='socks'?'socks':n.type==='mixed'?'mixed':'other';
-t.innerHTML+='<tr><td class="proto proto-'+c+'">'+(n.protocol||n.type)+'</td><td class="tag">'+n.tag+'</td><td>'+n.server+'</td><td class="port">'+n.port+'</td><td>'+n.server_name+'</td></tr>';
-});}
-}).catch(function(){});
-await api('anytls-node').then(function(a){
-var e=document.getElementById('anytls-detail');
-if(a.server){var d='類型: AnyTLS\\nServer: '+a.server+'\\n端口: '+a.port+'\\nTLS SN: '+a.server_name+'\\nTag: '+a.tag;var cp=a.server+':'+a.port;
-e.innerHTML='<div style="color:#58a6ff;margin-bottom:4px">'+d.replace(/\\n/g,'<br>')+'</div><div class="copy-row"><div class="copy-box">'+cp+'</div><button class="btn-copy" onclick="copyText(\''+cp+'\')">📋 複製</button></div>';}
-else{e.innerHTML='無 AnyTLS 節點配置';}
-}).catch(function(){document.getElementById('anytls-detail').textContent='載入失敗'});
-}
+async function getAnyTLSNode(){const r=await api('nodes-url');if(r.ok&&r.url){document.getElementById('node-box').textContent=r.url;document.getElementById('r-node-copy').style.display='flex';show('r-node-link','✅ 已生成',true)}else{show('r-node-link','FAIL: '+(r.error||''),false);document.getElementById('r-node-copy').style.display='none'}}
 </script>
 </body>
 </html>`

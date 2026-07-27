@@ -1,12 +1,14 @@
 package exec
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"strings"
 )
-
 // InboundListener sing-box 監聽端口信息
 type InboundListener struct {
 	Port   int    `json:"port"`
@@ -202,4 +204,59 @@ func nodeProtocol(typ, flow string) string {
 		return "VLESS"
 	}
 	return strings.Title(typ)
+}
+
+// GenAnyTLSURL 讀取 AnyTLS inbound 配置，生成 anytls:// 標準節點連結
+func GenAnyTLSURL() (string, CommandResult) {
+	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "cannot read config.json: " + err.Error()}
+	}
+	var c map[string]interface{}
+	if err := json.Unmarshal(cfgBytes, &c); err != nil {
+		return "", CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
+	}
+	var anytls map[string]interface{}
+	for _, v := range c["inbounds"].([]interface{}) {
+		if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "anytls" {
+			anytls = ii
+			break
+		}
+	}
+	if anytls == nil {
+		return "", CommandResult{Ok: false, Error: "no AnyTLS inbound found"}
+	}
+	port, _ := anytls["listen_port"].(float64)
+	if port == 0 {
+		return "", CommandResult{Ok: false, Error: "no listen_port in AnyTLS inbound"}
+	}
+	// server_name
+	var serverName string
+	tls, _ := anytls["tls"].(map[string]interface{})
+	if tls != nil {
+		s, _ := tls["server_name"].(string)
+		serverName = s
+	}
+	// UUID from users[0].password
+	uuids := []string{}
+	users, _ := anytls["users"].([]interface{})
+	for _, u := range users {
+		if ui, ok := u.(map[string]interface{}); ok {
+			pw, _ := ui["password"].(string)
+			uuids = append(uuids, pw)
+		}
+	}
+	if len(uuids) == 0 {
+		// 無 UUID 就自己生成一個
+		b := make([]byte, 16)
+		rand.Read(b)
+		uuids = append(uuids, hex.EncodeToString(b[:]))
+	}
+	// 優先用第一個 UUID
+	uuid := uuids[0]
+	// 生成標準連結: anytls://UUID@server_name:port/?insecure=1#anytls-server_name
+	values := url.Values{"insecure": {"1"}}
+	urlStr := fmt.Sprintf("anytls://%s@%s:%.0f/?%s#anytls-%s",
+		uuid, serverName, port, values.Encode(), serverName)
+	return urlStr, CommandResult{Ok: true}
 }
