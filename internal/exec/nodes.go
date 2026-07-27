@@ -2,6 +2,7 @@ package exec
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -310,6 +311,130 @@ func newUUID() string {
 		hex.EncodeToString(b[6:8]),
 		hex.EncodeToString(b[8:10]),
 		hex.EncodeToString(b[10:16]))
+}
+
+// genHY2URLWithParams 生成 hysteria2:// 標準節點連結（帶 host/端口參數）
+func GenHY2URLWithParams(host string, port int) (string, CommandResult) {
+	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "cannot read config.json: " + err.Error()}
+	}
+	var c map[string]interface{}
+	if err := json.Unmarshal(cfgBytes, &c); err != nil {
+		return "", CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
+	}
+	// 找 hysteria2 inbound
+	var hy2 map[string]interface{}
+	for _, v := range c["inbounds"].([]interface{}) {
+		if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "hysteria2" {
+			hy2 = ii
+			break
+		}
+	}
+	var password string
+	if hy2 != nil {
+		// password 通常直接係 string 或喺 users[]
+		pw, ok := hy2["password"].(string)
+		if ok && pw != "" {
+			password = pw
+		}
+	}
+	if password == "" {
+		password = newUUID()
+	}
+	// 端口默認 22222
+	port2 := 22222
+	if hy2 != nil {
+		p, _ := hy2["listen_port"].(float64)
+		if p > 0 {
+			port2 = int(p)
+		}
+	}
+	if port > 0 {
+		port2 = port
+	}
+	publicIP, err := getPublicIP()
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "cannot get public IP: " + err.Error()}
+	}
+	host2 := publicIP
+	if host != "" {
+		host2 = host
+	}
+	values := url.Values{"insecure": {"1"}}
+	urlStr := fmt.Sprintf("hysteria2://%s@%s:%d/?%s#hy2-%s", url.PathEscape(password), host2, port2, values.Encode(), host2)
+	return urlStr, CommandResult{Ok: true}
+}
+
+// genSSURLWithParams 生成 ss:// 標準節點連結（帶 host/端口/方法參數）
+func GenSSURLWithParams(host string, port int, method string) (string, CommandResult) {
+	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "cannot read config.json: " + err.Error()}
+	}
+	var c map[string]interface{}
+	if err := json.Unmarshal(cfgBytes, &c); err != nil {
+		return "", CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
+	}
+	// 找 shadowsocks inbound
+	var ss map[string]interface{}
+	for _, v := range c["inbounds"].([]interface{}) {
+		if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "shadowsocks" {
+			ss = ii
+			break
+		}
+	}
+	var password string
+	if ss != nil {
+		pw, ok := ss["password"].(string)
+		if ok && pw != "" {
+			password = pw
+		}
+	}
+	if password == "" {
+		password = randBase64(32)
+	}
+	// 方法默認 aes-256-gcm
+	method2 := "aes-256-gcm"
+	if ss != nil {
+		m, ok := ss["method"].(string)
+		if ok && m != "" {
+			method2 = m
+		}
+	}
+	if method != "" {
+		method2 = method
+	}
+	port2 := 33333
+	if ss != nil {
+		p, _ := ss["listen_port"].(float64)
+		if p > 0 {
+			port2 = int(p)
+		}
+	}
+	if port > 0 {
+		port2 = port
+	}
+	publicIP, err := getPublicIP()
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "cannot get public IP: " + err.Error()}
+	}
+	host2 := publicIP
+	if host != "" {
+		host2 = host
+	}
+	// ss://base64(method:password@host:port)#name
+	creds := fmt.Sprintf("%s:%s", method2, password)
+	encoded := base64.URLEncoding.EncodeToString([]byte(creds))
+	urlStr := fmt.Sprintf("ss://%s@%s:%d#ss-%s", encoded, host2, port2, host2)
+	return urlStr, CommandResult{Ok: true}
+}
+
+// randBase64 生成隨機 base64 字符串
+func randBase64(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return base64.RawStdEncoding.EncodeToString(b)
 }
 
 // UpdateAnyTLSUUID 生成新 UUID → 寫入 config.json → 重啟 sing-box
