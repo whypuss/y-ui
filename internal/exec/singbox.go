@@ -225,13 +225,20 @@ func checkSingboxProcess() (bool, string) {
 }
 
 func checkTun() (bool, string) {
-	// TUN = kernel interface tun0；存在即表示 TUN 啟用
-	cmd := exec.Command("sh", "-c", `ip link show tun0 2>/dev/null`)
+	// TUN 模式 = policy routing rules (9000-9010) 開住，流量入 tun0
+	// 只查 policy rules，唔查 tun0 虛接口（main 進程開都會有 tun0 但未必走 TUN）
+	cmd := exec.Command("sh", "-c", `ip rule show 2>/dev/null | grep -c "^90[0-9][0-9]:"`)
 	out, _ := cmd.Output()
-	if strings.Contains(string(out), "tun0") {
-		return true, "tun0 active"
+	n := strings.TrimSpace(string(out))
+	if n != "0" {
+		// 也確認 tun0 虛接口存在（完整 TUN 模式）
+		cmd2 := exec.Command("sh", "-c", `ip link show tun0 >/dev/null 2>&1`)
+		if cmd2.Run() == nil {
+			return true, fmt.Sprintf("TUN routing active (%s policy rules, tun0 up)", n)
+		}
+		return false, fmt.Sprintf("partial (%s policy rules, no tun0)", n)
 	}
-	return false, "disabled (no tun0 interface)"
+	return false, "disabled (no policy routing rules)"
 }
 
 func checkTproxy() bool {
@@ -255,66 +262,26 @@ func checkContainerOllama() bool {
 	return strings.TrimSpace(string(out)) == "OK"
 }
 
-// FixSingboxDNS 修復 sing-box DNS 配置為 1.12 兼容格式
+// FixSingboxDNS 已棄用（用 json.dump 覆蓋整份 config.json，風險高）
+// 改用 setTunAutoRoute() 單獨修改 auto_route 字段
 func FixSingboxDNS(ctx context.Context) CommandResult {
-	script := `python3 << 'PYEOF'
-import json
-path = "/etc/sing-box/config.json"
-with open(path) as f:
-    cfg = json.load(f)
-for k in ["dns", "dns-servers"]:
-    cfg.pop(k, None)
-cfg["dns"] = {
-    "servers": [
-        {"tag": "dns-direct", "address": "8.8.8.8", "address_strategy": "ipv4_only"}
-    ],
-    "final": "dns-direct",
-    "strategy": "ipv4_only"
-}
-with open(path, "w") as f:
-    json.dump(cfg, f, indent=2)
-print("DNS config fixed for sing-box 1.12")
-PYEOF
-`
-
-	cmd := exec.Command("sh", "-c", script)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-
-	err := cmd.Run()
-	if err != nil {
-		return CommandResult{
-			Ok:     false,
-			Stdout: stdout.String(),
-			Stderr: stderr.String(),
-			Error:  fmt.Sprintf("fix failed: %s", err.Error()),
-		}
-	}
-	return CommandResult{
-		Ok:     true,
-		Stdout: stdout.String(),
-		Stderr: stderr.String(),
-	}
+	_ = ctx
+	return CommandResult{Ok: false, Error: "deprecated: use setTunAutoRoute instead"}
 }
 
 // RestartSingbox 重啟 sing-box（systemd service，唔寫 routing rules）
 func RestartSingbox(ctx context.Context) CommandResult {
-	// FixSingboxDNS 會用 json.dump 覆蓋 config → auto_route 保持原值
-	// 必須在啟動前設 auto_route=false，防止 sing-box 寫 90xx routing rules 覆蓋 main default route
-	_ = FixSingboxDNS(ctx)
+	_ = ctx
+	// 重啟前設 auto_route=false，防止 sing-box 寫 90xx routing rules
 	_ = setTunAutoRoute(false)
 
-	// 用 systemd service 重啟（唔使 nohup）
 	restart := runCommandWithSudo([]string{"sh", "-c", `
-echo "restarting sing-box-main.service..."
+echo "restarting sing-box-main.service (auto_route=false)..."
 systemctl restart sing-box-main.service
 sleep 3
 if systemctl is-active --quiet sing-box-main.service; then
     systemctl is-active sing-box-main.service
 else
-    # fallback: nohup 直接啟動
     nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 &
     sleep 3
 fi
@@ -323,38 +290,9 @@ ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head 
 
 	return CommandResult{
 		Ok:     restart.Ok,
-		Stdout: "DNS fixed, auto_route=false, sing-box restarted: " + restart.Stdout,
+		Stdout: "auto_route=false, sing-box restarted: " + restart.Stdout,
 		Stderr: restart.Stderr,
 	}
-}
-
-// fixSingboxAutoRoute 將 config.json 中 TUN inbound 嘅 auto_route/strict_route 設為 false
-// 防止 sing-box 自動寫 policy routing rules（9000–9010），避免擾路由
-func fixSingboxAutoRoute() CommandResult {
-	script := `python3 << 'PYEOF'
-import json
-path = "/etc/sing-box/config.json"
-with open(path) as f:
-    c = json.load(f)
-for ib in c.get("inbounds", []):
-    if ib.get("type") == "tun":
-        ib["auto_route"] = False
-        ib["strict_route"] = False
-        print("TUN auto_route=False strict_route=False")
-        break
-with open(path, "w") as f:
-    json.dump(c, f, indent=2)
-PYEOF
-`
-	var stdout, stderr bytes.Buffer
-	cmd := exec.Command("sh", "-c", script)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err != nil {
-		return CommandResult{Ok: false, Stdout: stdout.String(), Stderr: stderr.String(), Error: err.Error()}
-	}
-	return CommandResult{Ok: true, Stdout: stdout.String()}
 }
 
 func checkListenerOnPort(port int) bool {
@@ -394,59 +332,13 @@ PYEOF
 	return CommandResult{Ok: true, Stdout: stdout.String()}
 }
 
-// startMainProcess 啟動 sing-box 主進程（config.json），帶 TProxy-Mixed :10808 listener
-func startMainProcess() CommandResult {
-	// 檢查主進程是否已運行
-	cmd := exec.Command("sh", "-c", `ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | wc -l`)
-	out, _ := cmd.Output()
-	if strings.TrimSpace(string(out)) != "0" {
-		return CommandResult{Ok: true, Stdout: "main process already running"}
-	}
-
-	// 寫 config.json: auto_route=false + strict_route=false（唔寫 policy routing rules，唔擾路由）
-	fix := FixSingboxDNS(context.Background())
-	if !fix.Ok {
-		return CommandResult{Ok: false, Error: "config fix failed: " + fix.Error}
-	}
-	_ = fix
-
-	// 啟動 systemd service（有 environment + capabilities）
-	r := runCommandWithSudo([]string{"sh", "-c", `
-echo "starting sing-box-main.service"
-systemctl restart sing-box-main.service
-sleep 3
-systemctl is-active sing-box-main.service
-ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head -1
-`})
-	return r
-}
-
-// TproxyOn 啟用 TProxy（只寫 iptables 規則，不啟動主進程）
-// TProxy 將 LAN 流量重定向到 :10808，需確保 10808 listener 由 TUN 開關控制
+// TproxyOn 啟用 TProxy（只寫 iptables 規則）
 func TproxyOn(ctx context.Context) CommandResult {
-	// 防循環: TUN 開住唔准開 TProxy
-	s := GetSystemStatus()
-	if s.TunActive {
-		return CommandResult{Ok: false, Error: "TUN is active — disable TUN before enabling TProxy (mutually exclusive)"}
-	}
-
 	_ = ctx
 
-	// 確保 10808 listener 在聽（啟動主進程，唔調 FixSingboxDNS — 會覆蓋 config）
+	// 檢查 10808 listener 在唔在聽（主進程應由 TUN 開關控制，唔自己啟）
 	if !checkListenerOnPort(10808) {
-		_ = setTunAutoRoute(false)
-		svc := `echo "starting sing-box-main.service for 10808 listener..."
-systemctl restart sing-box-main.service
-sleep 3
-systemctl is-active sing-box-main.service`
-		r := runCommandWithSudo([]string{"sh", "-c", svc})
-		if !r.Ok {
-			return CommandResult{Ok: false, Error: "Failed to start main process: " + r.Stderr + "\n" + r.Stdout, Stderr: r.Stderr, Stdout: r.Stdout}
-		}
-		time.Sleep(2 * time.Second)
-	}
-	if !checkListenerOnPort(10808) {
-		return CommandResult{Ok: false, Error: "Port 10808 still has no listener after start attempt"}
+		return CommandResult{Ok: false, Error: "Port 10808 has no listener. Start TUN first to bring up the main process."}
 	}
 
 	// 寫入 mangle TPROXY rules + iproute
@@ -479,42 +371,41 @@ func TproxyOff(ctx context.Context) CommandResult {
 	return r
 }
 
-// TunOn 啟動 sing-box TUN 主進程（帶 TUN）
+// TunOn 啟動 TUN 模式（獨立的 TUN 開關，不與其他模塊互斥）
+// 設 auto_route=true → sing-box 寫 policy routing rules 將流量路由入 tun0
 func TunOn() CommandResult {
-	// 防循環: TProxy 開住唔准開 TUN
-	s := GetSystemStatus()
-	if s.TproxyActive {
-		return CommandResult{Ok: false, Error: "TProxy is active — disable TProxy before enabling TUN (mutually exclusive)"}
-	}
-	_ = FixSingboxDNS(context.Background())
-	// 開 TUN 時設 auto_route=true（sing-box 寫 policy routing rules 路由流量入 tun0）
+	// 設 auto_route=true（sing-box 寫 policy routing rules）
 	_ = setTunAutoRoute(true)
 
-	// 檢查是否已在運行
+	// 檢查主進程是否已在運行
 	cmd := exec.Command("sh", "-c", `ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | wc -l`)
 	out, _ := cmd.Output()
 	n := strings.TrimSpace(string(out))
 	if n != "0" {
-		return CommandResult{Ok: true, Stdout: "TUN already running"}
+		// 已在運行，確認是否需要重啟以生效 auto_route
 	}
 
-	// 用 systemd service 啟動（唔使 nohup — 有 environment + capabilities + 可被 stop 控制）
+	// 用 systemd 重啟主進程（確保 auto_route=true 生效）
 	startScript := `
-echo "starting sing-box-main.service..."
+echo "starting sing-box-main.service (TUN mode: auto_route=true)..."
 systemctl restart sing-box-main.service
 sleep 3
 if ! systemctl is-active --quiet sing-box-main.service; then
-    # fallback: nohup 直接啟動
     nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 &
     sleep 3
 fi
+# 驗證 TUN 模式生效
+echo "=== policy routing rules ==="
+ip rule show | grep "^90[0-9][0-9]:" || echo "no 90xx rules"
+echo "=== tun0 ==="
+ip link show tun0 2>/dev/null || echo "no tun0"
 ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head -1
 `
 	r := runCommandWithSudo([]string{"sh", "-c", startScript})
 
 	return CommandResult{
 		Ok:     r.Ok,
-		Stdout: "TUN started: " + r.Stdout,
+		Stdout: "TUN enabled: " + r.Stdout,
 		Stderr: r.Stderr,
 	}
 }
