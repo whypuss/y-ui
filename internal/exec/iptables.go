@@ -114,7 +114,8 @@ iptables -t mangle -C PREROUTING 1 -s "$MY_IP" -j ACCEPT 2>/dev/null || iptables
 		buf.WriteString(fmt.Sprintf(`
 # FORWARD: LAN→WAN 轉發（LAN 網段 → WAN 網卡）
 iptables -C FORWARD -s "%s" -o "%s" -j ACCEPT 2>/dev/null || iptables -A FORWARD -s "%s" -o "%s" -j ACCEPT
-iptables -C FORWARD -i "%s" -s 0.0.0.0/0 -j ACCEPT 2>/dev/null || iptables -A FORWARD -i "%s" -j ACCEPT
+# FORWARD: 已建立連接嘅返回流量（入站 WAN → LAN）
+iptables -C FORWARD -i "%s" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || iptables -A FORWARD -i "%s" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 `, cfg.LANSubnet, cfg.Interface, cfg.LANSubnet, cfg.Interface, cfg.Interface, cfg.Interface))
 	}
 	buf.WriteString("echo \"[iptables] rules applied\"\n")

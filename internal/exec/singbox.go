@@ -299,24 +299,32 @@ PYEOF
 	}
 }
 
-// RestartSingbox 重啟 sing-box（nohup 背景，不斷 SSH）
+// RestartSingbox 重啟 sing-box（systemd service，唔寫 routing rules）
 func RestartSingbox(ctx context.Context) CommandResult {
-	fix := FixSingboxDNS(ctx)
-	if !fix.Ok {
-		return CommandResult{Ok: false, Error: "DNS fix failed: " + fix.Error}
-	}
+	// FixSingboxDNS 會用 json.dump 覆蓋 config → auto_route 保持原值
+	// 必須在啟動前設 auto_route=false，防止 sing-box 寫 90xx routing rules 覆蓋 main default route
+	_ = FixSingboxDNS(ctx)
+	_ = setTunAutoRoute(false)
 
-	// 殺所有舊 sing-box（需要 sudo）
-	kill := runCommandWithSudo([]string{"sh", "-c", `ps -o pid= -C sing-box 2>/dev/null | xargs -r kill 2>/dev/null; sleep 1; echo "killed old sing-box"`})
-
-	// 啟動新進程（需要 sudo）
-	startScript := `sleep 2 && nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 & echo "started sing-box" && sleep 4 && ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head -1`
-	start := runCommandWithSudo([]string{"sh", "-c", startScript})
+	// 用 systemd service 重啟（唔使 nohup）
+	restart := runCommandWithSudo([]string{"sh", "-c", `
+echo "restarting sing-box-main.service..."
+systemctl restart sing-box-main.service
+sleep 3
+if systemctl is-active --quiet sing-box-main.service; then
+    systemctl is-active sing-box-main.service
+else
+    # fallback: nohup 直接啟動
+    nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 &
+    sleep 3
+fi
+ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head -1
+`})
 
 	return CommandResult{
-		Ok:     start.Ok,
-		Stdout: fix.Stdout + "\n" + kill.Stdout + "\n" + start.Stdout,
-		Stderr: fix.Stderr + "\n" + kill.Stderr + "\n" + start.Stderr,
+		Ok:     restart.Ok,
+		Stdout: "DNS fixed, auto_route=false, sing-box restarted: " + restart.Stdout,
+		Stderr: restart.Stderr,
 	}
 }
 
