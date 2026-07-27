@@ -211,15 +211,24 @@ func checkSingboxProcess() (bool, string) {
 }
 
 func checkTun() (bool, string) {
-	cmd := exec.Command("sh", "-c", `ip addr show | grep -E "tun|172.19" | head -3`)
+	// 檢查 sing-box TUN device (tun0) 或 tproxy interface
+	cmd := exec.Command("sh", "-c", `ip link show | grep -E "tun|tproxy" | head -3`)
 	out, _ := cmd.Output()
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	for _, l := range lines {
-		if strings.Contains(l, "tun") || strings.Contains(l, "172.19") {
-			return true, strings.TrimSpace(l)
+		l = strings.TrimSpace(l)
+		if l != "" {
+			return true, l
 		}
 	}
-	return false, "disabled"
+	// 檢查 config.json 主進程（帶 TUN）
+	cmd2 := exec.Command("sh", "-c", `ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | wc -l`)
+	out2, _ := cmd2.Output()
+	n := strings.TrimSpace(string(out2))
+	if n == "0" {
+		return false, "disabled"
+	}
+	return true, "running (config.json)"
 }
 
 func checkTproxy() bool {
