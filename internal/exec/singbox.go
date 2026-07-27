@@ -356,6 +356,36 @@ func checkListenerOnPort(port int) bool {
 	return n != "0"
 }
 
+// setTunAutoRoute 設定 config.json 中 TUN inbound 嘅 auto_route/strict_route
+// on=true → sing-box 寫 policy routing rules（TUN 模式）
+// on=false → 唔寫 routing rules（TProxy 模式）
+func setTunAutoRoute(on bool) CommandResult {
+	script := fmt.Sprintf(`python3 << 'PYEOF'
+import json
+path = "/etc/sing-box/config.json"
+with open(path) as f:
+    c = json.load(f)
+for ib in c.get("inbounds", []):
+    if ib.get("type") == "tun":
+        ib["auto_route"] = %v
+        ib["strict_route"] = %v
+        print("TUN auto_route=%v strict_route=%v")
+        break
+with open(path, "w") as f:
+    json.dump(c, f, indent=2)
+PYEOF
+`, on, on, on, on)
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		return CommandResult{Ok: false, Stdout: stdout.String(), Stderr: stderr.String(), Error: err.Error()}
+	}
+	return CommandResult{Ok: true, Stdout: stdout.String()}
+}
+
 // startMainProcess 啟動 sing-box 主進程（config.json），帶 TProxy-Mixed :10808 listener
 func startMainProcess() CommandResult {
 	// 檢查主進程是否已運行
@@ -394,9 +424,21 @@ func TproxyOn(ctx context.Context) CommandResult {
 
 	_ = ctx
 
-	// 確保 10808 listener 在聽（由 TUN 開關控制，唔自己啟主進程）
+	// 確保 10808 listener 在聽（啟動主進程，唔調 FixSingboxDNS — 會覆蓋 config）
 	if !checkListenerOnPort(10808) {
-		return CommandResult{Ok: false, Error: "No listener on port 10808. Start TUN first to enable the 10808 mixed inbound listener, then enable TProxy."}
+		_ = setTunAutoRoute(false)
+		svc := `echo "starting sing-box-main.service for 10808 listener..."
+systemctl restart sing-box-main.service
+sleep 3
+systemctl is-active sing-box-main.service`
+		r := runCommandWithSudo([]string{"sh", "-c", svc})
+		if !r.Ok {
+			return CommandResult{Ok: false, Error: "Failed to start main process: " + r.Stderr + "\n" + r.Stdout, Stderr: r.Stderr, Stdout: r.Stdout}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if !checkListenerOnPort(10808) {
+		return CommandResult{Ok: false, Error: "Port 10808 still has no listener after start attempt"}
 	}
 
 	// 寫入 mangle TPROXY rules + iproute
@@ -434,10 +476,9 @@ func TunOn() CommandResult {
 	if s.TproxyActive {
 		return CommandResult{Ok: false, Error: "TProxy is active — disable TProxy before enabling TUN (mutually exclusive)"}
 	}
-	fix := FixSingboxDNS(context.Background())
-	if !fix.Ok {
-		return CommandResult{Ok: false, Error: "DNS fix failed: " + fix.Error}
-	}
+	_ = FixSingboxDNS(context.Background())
+	// 開 TUN 時設 auto_route=true（sing-box 寫 policy routing rules 路由流量入 tun0）
+	_ = setTunAutoRoute(true)
 
 	// 檢查是否已在運行
 	cmd := exec.Command("sh", "-c", `ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | wc -l`)
@@ -447,8 +488,18 @@ func TunOn() CommandResult {
 		return CommandResult{Ok: true, Stdout: "TUN already running"}
 	}
 
-	// 用 sudo 啟動 nohup（背景，不斷 SSH）
-	startScript := `nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 & sleep 3 && ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head -1`
+	// 用 systemd service 啟動（唔使 nohup — 有 environment + capabilities + 可被 stop 控制）
+	startScript := `
+echo "starting sing-box-main.service..."
+systemctl restart sing-box-main.service
+sleep 3
+if ! systemctl is-active --quiet sing-box-main.service; then
+    # fallback: nohup 直接啟動
+    nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 &
+    sleep 3
+fi
+ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head -1
+`
 	r := runCommandWithSudo([]string{"sh", "-c", startScript})
 
 	return CommandResult{
