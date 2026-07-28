@@ -3,10 +3,17 @@
 # y-ui 一鍵部署腳本
 # 用法:
 #   curl -o install.sh https://raw.githubusercontent.com/whypuss/y-ui/main/install.sh
-#   bash install.sh                  # 互動式
-#   bash install.sh --full 17779    # 完整部署 + sing-box 版本
-#   bash install.sh --panel          # 僅部署 y-ui 到現有 sing-box
-#   bash install.sh --uninstall      # 解除安裝
+#   bash install.sh              # 互動式 (僅部署 y-ui)
+#   bash install.sh --full       # 完整部署 (sing-box + y-ui)
+#   bash install.sh --panel      # 僅部署 y-ui 到現有 sing-box
+#   bash install.sh --uninstall  # 解除安裝
+# 非互動參數:
+#   --port <端口>       面板端口 (預設 19999)
+#   --version <版本>    sing-box 版本，e.g. 1.13.14 (預設 latest)
+#   --admin <用戶名>    管理用戶 (預設當前用戶)
+# 示例:
+#   curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/install.sh | sudo bash -s -- --full
+#   sudo bash install.sh --full --version 1.13.14 --port 19999 --admin root
 # ============================================================
 set -e
 
@@ -16,6 +23,12 @@ SINGBOX_DIR="/etc/sing-box"
 SINGBOX_BIN_DIR="${SINGBOX_DIR}/bin"
 SINGBOX_CONFIG="${SINGBOX_DIR}/config.json"
 GITHUB_REPO="whypuss/y-ui"
+
+# ---- 可選非互動參數 ----
+DEPLOY_MODE=""       # full / panel / uninstall
+SINGBOX_VERSION=""   # 預設 latest
+ADMIN_USER=""        # 預設 $(whoami)
+QUIET="0"            # 非互動模式
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -485,7 +498,6 @@ setup_firewall() {
 # ---------- 完整部署 ----------
 
 do_full_deploy() {
-    local sb_version="${1:-latest}"
     echo ""
     echo "============================================"
     echo "  y-ui 完整部署 (sing-box + y-ui)"
@@ -500,34 +512,41 @@ do_full_deploy() {
     setup_kernel_params
 
     echo ""
-    read -rp "請選擇 sing-box 版本 (直接 Enter 用最新穩定版): " input
-    if [ -n "$input" ]; then
-        sb_version="$input"
+    if [ "$QUIET" != "1" ]; then
+        read -rp "請選擇 sing-box 版本 [latest / 如 1.13.14, 直接 Enter 用最新]: " input
+        if [ -n "$input" ]; then
+            SINGBOX_VERSION="$input"
+        fi
     fi
+    info "sing-box 版本: ${SINGBOX_VERSION}"
     echo ""
 
-    install_singbox "$sb_version"
+    install_singbox "$SINGBOX_VERSION"
     install_singbox_service
 
     echo ""
-    read -rp "y-ui 面板端口 [19999]: " input
-    if [ -n "$input" ]; then
-        PANEL_PORT="$input"
+    if [ "$QUIET" != "1" ]; then
+        read -rp "y-ui 面板端口 [${PANEL_PORT}]: " input
+        if [ -n "$input" ]; then
+            PANEL_PORT="$input"
+        fi
     fi
+    info "面板端口: ${PANEL_PORT}"
 
     generate_singbox_config "$PANEL_PORT"
     setup_firewall "$PANEL_PORT"
 
     echo ""
-    read -rp "管理用戶 (面板運行用戶，用於 sudoers): " admin_user
-    if [ -n "$admin_user" ]; then
-        if id "$admin_user" >/dev/null 2>&1; then
-            setup_sudoers "$admin_user"
-        else
-            warn "用戶 ${admin_user} 不存在，將用當前用戶"
-            setup_sudoers "$(whoami)"
+    if [ "$QUIET" != "1" ]; then
+        read -rp "管理用戶 (面板運行用戶，用於 sudoers, 直接 Enter 用 ${ADMIN_USER}): " au
+        if [ -n "$au" ]; then
+            ADMIN_USER="$au"
         fi
+    fi
+    if id "$ADMIN_USER" >/dev/null 2>&1; then
+        setup_sudoers "$ADMIN_USER"
     else
+        warn "用戶 ${ADMIN_USER} 不存在，將用當前用戶 $(whoami)"
         setup_sudoers "$(whoami)"
     fi
 
@@ -599,29 +618,43 @@ do_panel_deploy() {
     info "Service manager: ${sm}"
 
     echo ""
-    read -rp "y-ui 面板端口 [19999]: " input
-    if [ -n "$input" ]; then
-        PANEL_PORT="$input"
+    if [ "$QUIET" != "1" ]; then
+        read -rp "y-ui 面板端口 [${PANEL_PORT}]: " input
+        if [ -n "$input" ]; then
+            PANEL_PORT="$input"
+        fi
     fi
+    info "面板端口: ${PANEL_PORT}"
 
     # 檢測 config.json 是否存在
     if [ ! -f "$SINGBOX_CONFIG" ]; then
         warn "未找到 ${SINGBOX_CONFIG}"
-        read -rp "是否生成默認 config.json? (y/N): " gen
-        if [ "$gen" = "y" ] || [ "$gen" = "Y" ]; then
-            generate_singbox_config "$PANEL_PORT"
+        if [ "$QUIET" != "1" ]; then
+            read -rp "是否生成默認 config.json? (y/N): " gen
+            if [ "$gen" = "y" ] || [ "$gen" = "Y" ]; then
+                generate_singbox_config "$PANEL_PORT"
+            else
+                warn "請確保 sing-box 配置存在"
+            fi
         else
-            warn "請確保 sing-box 配置存在"
+            info "自動生成默認 config.json"
+            generate_singbox_config "$PANEL_PORT"
         fi
     fi
 
     setup_firewall "$PANEL_PORT"
 
     echo ""
-    read -rp "管理用戶 (用於 sudoers，直接 Enter 用當前用戶): " admin_user
-    if [ -n "$admin_user" ]; then
-        setup_sudoers "$admin_user"
+    if [ "$QUIET" != "1" ]; then
+        read -rp "管理用戶 (用於 sudoers, 直接 Enter 用 ${ADMIN_USER}): " au
+        if [ -n "$au" ]; then
+            ADMIN_USER="$au"
+        fi
+    fi
+    if id "$ADMIN_USER" >/dev/null 2>&1; then
+        setup_sudoers "$ADMIN_USER"
     else
+        warn "用戶 ${ADMIN_USER} 不存在，將用當前用戶 $(whoami)"
         setup_sudoers "$(whoami)"
     fi
 
@@ -692,39 +725,78 @@ do_uninstall() {
 # ---------- 主入口 ----------
 
 main() {
-    case "${1:-}" in
-        --full|-f)
-            do_full_deploy "${2:-latest}"
-            ;;
-        --panel|-p)
-            do_panel_deploy
-            ;;
-        --uninstall|-u)
-            do_uninstall
-            ;;
-        --help|-h)
-            echo "y-ui 一鍵部署腳本"
-            echo ""
-            echo "用法:"
-            echo "  sudo bash install.sh              # 互動式 (僅部署 y-ui)"
-            echo "  sudo bash install.sh --full [版本]  # 完整部署 (安裝 sing-box + y-ui)"
-            echo "  sudo bash install.sh --panel        # 在現有 sing-box 上部署 y-ui"
-            echo "  sudo bash install.sh --uninstall    # 解除安裝 y-ui"
-            echo "  sudo bash install.sh --help         # 顯示此幫助"
-            echo ""
-            echo "示例:"
-            echo "  # 一條命令完整部署（自動安裝最新 sing-box）"
-            echo "  curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/install.sh | sudo bash -s -- --full"
-            echo ""
-            echo "  # 指定 sing-box 版本 1.13.14"
-            echo "  sudo bash install.sh --full 1.13.14"
-            echo ""
-            echo "  # 僅在已有 sing-box 的機子上裝面板"
-            echo "  sudo bash install.sh --panel"
-            ;;
+    # ---- 解析標記參數 ----
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --full|-f)
+                DEPLOY_MODE="full"; shift ;;
+            --panel|-p)
+                DEPLOY_MODE="panel"; shift ;;
+            --uninstall|-u)
+                DEPLOY_MODE="uninstall"; shift ;;
+            --help|-h)
+                echo "y-ui 一鍵部署腳本"
+                echo ""
+                echo "用法:"
+                echo "  sudo bash install.sh              # 互動式 (僅部署 y-ui)"
+                echo "  sudo bash install.sh --full       # 完整部署 (安裝 sing-box + y-ui)"
+                echo "  sudo bash install.sh --panel      # 在現有 sing-box 上部署 y-ui"
+                echo "  sudo bash install.sh --uninstall  # 解除安裝 y-ui"
+                echo "  sudo bash install.sh --help       # 顯示此幫助"
+                echo ""
+                echo "非互動參數 (可與 --full/--panel 組合):"
+                echo "  --port <端口>       面板端口 (預設 19999)"
+                echo "  --version <版本>    sing-box 版本, 如 1.13.14 (預設 latest)"
+                echo "  --admin <用戶名>    管理用戶 (預設當前用戶)"
+                echo ""
+                echo "示例:"
+                echo "  # 一條命令完整部署（全部默認值，自動最新版）"
+                echo "  curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/install.sh | sudo bash -s -- --full"
+                echo ""
+                echo "  # 指定 sing-box 版本 + 面板端口"
+                echo "  sudo bash install.sh --full --version 1.13.14 --port 19999 --admin root"
+                echo ""
+                echo "  # 僅在已有 sing-box 的機子上裝面板"
+                echo "  sudo bash install.sh --panel --port 19999"
+                exit 0 ;;
+            --port)
+                PANEL_PORT="$2"; shift 2 ;;
+            --version)
+                SINGBOX_VERSION="$2"; shift 2 ;;
+            --admin)
+                ADMIN_USER="$2"; shift 2 ;;
+            --quiet)
+                QUIET="1"; shift ;;
+            *)
+                # 舊用法兼容: 位置參數 (第一個非標記參數當做模式, 第二個當做 sing-box 版本)
+                if [ -z "$DEPLOY_MODE" ]; then
+                    DEPLOY_MODE="$1"; shift
+                elif [ "$DEPLOY_MODE" = "full" ] && [ -z "$SINGBOX_VERSION" ]; then
+                    SINGBOX_VERSION="$1"; shift
+                else
+                    err "未知參數: $1 (運行 --help 查看用法)"
+                    exit 1
+                fi ;;
+        esac
+    done
+
+    # ---- 默認值 ----
+    SINGBOX_VERSION="${SINGBOX_VERSION:-latest}"
+    ADMIN_USER="${ADMIN_USER:-$(whoami)}"
+
+    case "$DEPLOY_MODE" in
+        full|-f)
+            do_full_deploy ;;
+        panel|-p)
+            do_panel_deploy ;;
+        uninstall|-u)
+            do_uninstall ;;
         *)
-            do_panel_deploy
-            ;;
+            if [ -z "$DEPLOY_MODE" ]; then
+                echo "未指定部署模式, 運行 --help 查看用法。默認: 僅部署 y-ui 面板"
+                echo ""
+            fi
+            do_panel_deploy ;;
     esac
 }
 
