@@ -213,8 +213,9 @@ func nodeProtocol(typ, flow string) string {
 }
 
 // getSingboxInbounds 安全讀取 sing-box 所有 inbound 配置（主 config + conf/*.json）
+// GetSingboxInbounds 讀取 config.json + conf/*.json 的所有 inbounds
 // 不會因類型斷言 panic —— 當 config.json 冇 inbounds 時返回空列表
-func getSingboxInbounds() ([]map[string]interface{}, CommandResult) {
+func GetSingboxInbounds() ([]map[string]interface{}, CommandResult) {
 	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
 	if err != nil {
 		return nil, CommandResult{Ok: false, Error: "cannot read config.json: " + err.Error()}
@@ -268,7 +269,7 @@ func findInbound(inbounds []map[string]interface{}, typ string) (map[string]inte
 }
 
 // readSingboxPassword 從 users[] 讀 password（兼容頂層 password + users 結構）
-func readSingboxPassword(ib map[string]interface{}) string {
+func ReadSingboxPassword(ib map[string]interface{}) string {
 	if pw, ok := ib["password"].(string); ok && pw != "" {
 		return pw
 	}
@@ -359,7 +360,7 @@ func GenAnyTLSURL() (string, CommandResult) {
 
 // GenAnyTLSURLWithParams 帶 host/端口參數嘅版本
 func GenAnyTLSURLWithParams(host string, port int) (string, CommandResult) {
-	inbounds, r := getSingboxInbounds()
+	inbounds, r := GetSingboxInbounds()
 	if !r.Ok {
 		return "", r
 	}
@@ -367,7 +368,7 @@ func GenAnyTLSURLWithParams(host string, port int) (string, CommandResult) {
 	if !found {
 		return "", CommandResult{Ok: false, Error: "no AnyTLS inbound found in config or conf/"}
 	}
-	uuid := readSingboxPassword(anytls)
+	uuid := ReadSingboxPassword(anytls)
 	if uuid == "" {
 		return "", CommandResult{Ok: false, Error: "no UUID found in AnyTLS inbound"}
 	}
@@ -439,14 +440,14 @@ func newUUID() string {
 
 // genHY2URLWithParams 生成 hysteria2:// 標準節點連結（帶 host/端口參數）
 func GenHY2URLWithParams(host string, port int) (string, CommandResult) {
-	inbounds, r := getSingboxInbounds()
+	inbounds, r := GetSingboxInbounds()
 	if !r.Ok {
 		return "", r
 	}
 	hy2, _ := findInbound(inbounds, "hysteria2")
 	password := ""
 	if hy2 != nil {
-		password = readSingboxPassword(hy2)
+		password = ReadSingboxPassword(hy2)
 	}
 	if password == "" {
 		password = newUUID()
@@ -476,14 +477,14 @@ func GenHY2URLWithParams(host string, port int) (string, CommandResult) {
 
 // genSSURLWithParams 生成 ss:// 標準節點連結（帶 host/端口/方法參數）
 func GenSSURLWithParams(host string, port int, method string) (string, CommandResult) {
-	inbounds, r := getSingboxInbounds()
+	inbounds, r := GetSingboxInbounds()
 	if !r.Ok {
 		return "", r
 	}
 	ss, _ := findInbound(inbounds, "shadowsocks")
 	password := ""
 	if ss != nil {
-		password = readSingboxPassword(ss)
+		password = ReadSingboxPassword(ss)
 	}
 	if password == "" {
 		password = randBase64(32)

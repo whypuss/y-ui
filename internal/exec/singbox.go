@@ -261,20 +261,26 @@ func FixSingboxDNS(ctx context.Context) CommandResult {
 // RestartSingbox 重啟 sing-box（systemd service，唔寫 routing rules）
 func RestartSingbox(ctx context.Context) CommandResult {
 	_ = ctx
-	// 重啟前設 auto_route=false，防止 sing-box 寫 90xx routing rules
 	_ = setTunAutoRoute(false)
 
 	restart := runCommandWithSudo([]string{"sh", "-c", `
-echo "restarting sing-box-main.service (auto_route=false)..."
-systemctl restart sing-box-main.service
-sleep 3
-if systemctl is-active --quiet sing-box-main.service; then
-    systemctl is-active sing-box-main.service
+echo "checking service manager..."
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    echo "using systemd"
+    systemctl restart sing-box-main.service
+    sleep 3
+elif command -v rc-service >/dev/null 2>&1; then
+    echo "using OpenRC"
+    /etc/init.d/sing-box restart
+    sleep 3
 else
+    echo "using direct start"
+    pkill -9 -f "sing-box run -c /etc/sing-box/config.json"
+    sleep 2
     nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 &
     sleep 3
 fi
-ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head -1
+ps -eo pid,lstart,args | grep "sing-box run -c" | grep -v grep
 `})
 
 	return CommandResult{

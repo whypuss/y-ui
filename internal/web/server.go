@@ -175,6 +175,20 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
 		}
 		return
+	case "nodes-current-password":
+		inbounds, cr := exec.GetSingboxInbounds()
+		if !cr.Ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": cr.Error})
+			return
+		}
+		pwMap := map[string]string{}
+		for _, ib := range inbounds {
+			if t, ok := ib["type"]; ok {
+				pwMap[t.(string)] = exec.ReadSingboxPassword(ib)
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "passwords": pwMap})
+		return
 	case "nodes-update-uuid":
 		newUUID, result := exec.UpdateAnyTLSUUID()
 		if result.Ok {
@@ -315,8 +329,9 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 <table class="config-table">
 <tr><td>內部端口</td><td><input type="number" id="anytls-port" class="input" placeholder="17777"></td></tr>
 <tr><td>映射端口</td><td><input type="number" id="anytls-mapped" class="input" placeholder="留空=內部端口"></td></tr>
+<tr><td>系統密碼</td><td><span id="anytls-pwd" class="status-value">載入中...</span></td></tr>
 </table>
-<div class="btn-group"><button class="btn success" onclick="getAnyTLSNode()">獲取節點</button><button class="btn" onclick="updateAnyTLSUUID()">更新 UUID</button></div>
+<div class="btn-group"><button class="btn success" onclick="getAnyTLSNode()">獲取節點</button><button class="btn" onclick="updateAnyTLSUUID()">更新 UUID</button><button class="btn" onclick="viewAnyTLSPassword()">查看系統密碼</button></div>
 <div id="r-anytls" class="result"></div>
 <div id="c-anytls" class="copy-row" style="display:none"><div class="copy-box" id="anytls-box"></div><button class="btn-copy" onclick="copyText(document.getElementById('anytls-box').textContent)">📋 複製</button></div>
 </div>
@@ -383,8 +398,9 @@ async function getHY2Node(){var port=getPort('hy2-port','hy2-mapped');const u=aw
 async function getSSNode(){var port=getPort('ss-port','ss-mapped');var method=document.getElementById('ss-method').value;const u=await api('nodes-ss-url',{port:port,method:method});if(u.ok&&u.url){showNode('ss-box','c-ss','r-ss',u.url)}else{show('r-ss','FAIL: '+(u.error||''),false)}}
 async function updateAnyTLSUUID(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-uuid');if(r.ok){show('r-anytls','✅ UUID 已更新\n'+r.stdout,true);b.disabled=false}else{show('r-anytls','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-anytls','ERROR: '+e.message,false);b.disabled=false}}
 async function updateHY2Password(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-hy2');if(r.ok){show('r-hy2','✅ 密碼已更新\n'+r.stdout,true);b.disabled=false}else{show('r-hy2','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-hy2','ERROR: '+e.message,false);b.disabled=false}}
-async function updateSSPassword(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-ss');if(r.ok){show('r-ss','✅ 密碼已更新\n'+r.stdout,true);b.disabled=false}else{show('r-ss','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-ss','ERROR: '+e.message,false);b.disabled=false}}
-
+async function updateSSPassword(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-ss');if(r.ok){show('r-ss','✅ 密碼已更新\\n'+r.stdout,true);b.disabled=false}else{show('r-ss','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-ss','ERROR: '+e.message,false);b.disabled=false}}
+async function viewAnyTLSPassword(){try{const d=await api('nodes-current-password');const pw=d.passwords&&d.passwords.anytls;if(pw){document.getElementById('anytls-pwd').textContent=pw;show('r-anytls','系統密碼: '+pw,true)}else{show('r-anytls','未找到 AnyTLS 密碼',false)}}catch(e){show('r-anytls','ERROR: '+e.message,false)}}
+(function(){api('nodes-current-password').then(function(d){if(d.passwords&&d.passwords.anytls)document.getElementById('anytls-pwd').textContent=d.passwords.anytls}).catch(function(){})})()
 </script>
 </body>
 </html>`
