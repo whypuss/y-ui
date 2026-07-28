@@ -597,7 +597,7 @@ do_full_deploy() {
     sleep 2
     local panel_status
     if [ "$sm" = "openrc" ]; then
-        panel_status=$(/sbin/rc-status y-ui 2>/dev/null | grep -q y-ui && echo "active" || echo "inactive")
+        panel_status="inactive"; [ -s /run/y-ui.pid ] && kill -0 "$(cat /run/y-ui.pid 2>/dev/null)" 2>/dev/null && panel_status="active"; panel_status
     else
         panel_status=$(systemctl is-active y-ui 2>/dev/null || echo "inactive")
     fi
@@ -702,7 +702,7 @@ do_panel_deploy() {
     sleep 2
     local panel_status
     if [ "$sm" = "openrc" ]; then
-        panel_status=$(/sbin/rc-status y-ui 2>/dev/null | grep -q y-ui && echo "active" || echo "inactive")
+        panel_status="inactive"; [ -s /run/y-ui.pid ] && kill -0 "$(cat /run/y-ui.pid 2>/dev/null)" 2>/dev/null && panel_status="active"; panel_status
     else
         panel_status=$(systemctl is-active y-ui 2>/dev/null || echo "inactive")
     fi
