@@ -272,6 +272,7 @@ func findInbound(inbounds []map[string]interface{}, typ string) (map[string]inte
 
 // AnyRealityConfig AnyTLS+Reality 配置摘要
 type AnyRealityConfig struct {
+	ListenPort  int    `json:"listen_port"`
 	PrivateKey  string `json:"private_key"`
 	PublicKey   string `json:"public_key"`
 	ServerName  string `json:"server_name"`
@@ -302,6 +303,9 @@ func GetAnyRealityConfig() (AnyRealityConfig, CommandResult) {
 				continue
 			}
 			pk, _ := reality["private_key"].(string)
+			if lp, ok := ib["listen_port"].(float64); ok && lp > 0 {
+				cfg.ListenPort = int(lp)
+			}
 			cfg.ServerName = sni
 			cfg.PrivateKey = pk
 			// 計算 public_key（X25519）
@@ -851,3 +855,55 @@ func UpdateAnyTLSUUID() (string, CommandResult) {
 	}
 }
 
+// GenAnyRealityClientJSON 生成 AnyTLS+Reality 客戶端完整 JSON（唔依賴 URL 導入）
+func GenAnyRealityClientJSON(host string, port int, serverNameOverride string) (string, CommandResult) {
+	cfg, result := GetAnyRealityConfig()
+	if !result.Ok { return "", result }
+	pwd, result := GenAnyRealityURLWithParams(host, port, serverNameOverride, "")
+	if !result.Ok { return "", result }
+	// GenAnyRealityURLWithParams 返回 URL; 讀實際密碼
+	inbounds, ibOk := GetSingboxInbounds()
+	password := ""
+	if ibOk.Ok {
+		for _, ib := range inbounds {
+			if t, ok := ib["type"]; ok && t == "anytls" {
+				tls, ok := ib["tls"].(map[string]interface{})
+				if !ok { continue }
+				reality, ok := tls["reality"].(map[string]interface{})
+				if !ok { continue }
+				if enabled, ok := reality["enabled"].(bool); ok && enabled {
+					password = ReadSingboxPassword(ib)
+					break
+				}
+			}
+		}
+	}
+	if password == "" { return "", CommandResult{Ok: false, Error: "password not found"} }
+	sni := cfg.ServerName
+	if serverNameOverride != "" { sni = serverNameOverride }
+	clientTLS := map[string]any{
+		"enabled":     true,
+		"server_name": sni,
+		"insecure":    true,
+		"utls": map[string]any{
+			"enabled":     true,
+			"fingerprint": "chrome",
+		},
+		"reality": map[string]any{
+			"enabled":    true,
+			"public_key": cfg.PublicKey,
+		},
+	}
+	obj := map[string]any{
+		"type":        "anytls",
+		"tag":         "anytls-out",
+		"server":      host,
+		"server_port": port,
+		"password":    password,
+		"tls":         clientTLS,
+	}
+	out, err := json.MarshalIndent(obj, "", "  ")
+	_ = pwd // URL still returned for reference
+	if err != nil { return "", CommandResult{Ok: false, Error: err.Error()} }
+	return string(out), CommandResult{Ok: true}
+}
