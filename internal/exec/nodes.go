@@ -667,6 +667,17 @@ func GenAnyRealityURLWithParams(host string, port int, serverNameOverride string
 			}
 		}
 	}
+	// 讀 REALITY private_key 並計算 public_key
+	privateKey := ""
+	if tls, ok := realityIB["tls"].(map[string]interface{}); ok {
+		if reality, ok := tls["reality"].(map[string]interface{}); ok {
+			privateKey, _ = reality["private_key"].(string)
+			if sids, ok := reality["short_id"].([]interface{}); ok && len(sids) > 0 {
+				shortID, _ = sids[0].(string)
+			}
+		}
+	}
+	publicKey := x25519PublicKey(privateKey)
 	// 用戶輸入覆蓋
 	if serverNameOverride != "" {
 		serverName = serverNameOverride
@@ -677,8 +688,11 @@ func GenAnyRealityURLWithParams(host string, port int, serverNameOverride string
 	if serverName == "" {
 		return "", CommandResult{Ok: false, Error: "reality server_name not configured"}
 	}
-	// anytls://password@host:port/?server=SN&shortId=ID&insecure=1
+	// anytls://password@host:port/?server=SN&publicKey=PK&shortId=ID&insecure=1
 	values := url.Values{"insecure": {"1"}, "server": {serverName}}
+	if publicKey != "" {
+		values["publicKey"] = []string{publicKey}
+	}
 	if shortID != "" {
 		values["shortId"] = []string{shortID}
 	}
