@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"golang.org/x/crypto/curve25519"
 )
 // InboundListener sing-box 監聽端口信息
 type InboundListener struct {
@@ -319,11 +321,27 @@ func GetAnyRealityConfig() (AnyRealityConfig, CommandResult) {
 	return cfg, CommandResult{Ok: true}
 }
 
-// x25519PublicKey REALITY public_key 需從 private_key 計算（X25519 scalar mult）
-// NEKOBOX 客戶端唔需要 public_key，只須 server_name 驗證身份
-// 留空，節點頁顯示「需計算」提示
+// x25519PublicKey REALITY public_key = X25519 scalar mult(private_key, basepoint)
+// 客戶端（sing-box / sbyt7 教程）必須填 public_key 連接
 func x25519PublicKey(privateKey string) string {
-	return ""
+	if privateKey == "" {
+		return ""
+	}
+	var priv, pub, base [32]byte
+	b, err := base64.RawURLEncoding.DecodeString(privateKey)
+	if err != nil {
+		b, err = base64.StdEncoding.DecodeString(privateKey)
+		if err != nil {
+			return ""
+		}
+	}
+	if len(b) != 32 {
+		return ""
+	}
+	copy(priv[:], b)
+	copy(base[:], curve25519.Basepoint)
+	curve25519.ScalarMult(&pub, &priv, &base)
+	return base64.RawURLEncoding.EncodeToString(pub[:])
 }
 
 // readSingboxPassword 從 users[] 讀 password（兼容頂層 password + users 結構）

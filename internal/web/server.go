@@ -173,6 +173,34 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
 		}
 		return
+	case "nodes-anyreality-compare":
+		cfg, cOk := exec.GetAnyRealityConfig()
+		if !cOk.Ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": cOk.Error})
+			return
+		}
+		inbounds, ibOk := exec.GetSingboxInbounds()
+		pwd := ""
+		if ibOk.Ok {
+			for _, ib := range inbounds {
+				tag := ib["tag"].(string)
+				if strings.Contains(tag, "REALITY") {
+					pwd = exec.ReadSingboxPassword(ib)
+					break
+				}
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok": true,
+			"system": map[string]interface{}{
+				"private_key": cfg.PrivateKey,
+				"public_key":  cfg.PublicKey,
+				"server_name": cfg.ServerName,
+				"short_id":    cfg.ShortID,
+				"password":    pwd,
+			},
+		})
+		return
 	case "nodes-hy2-url":
 		urlStr, result := exec.GenHY2URLWithParams(req.Host, req.Port)
 		if result.Ok {
@@ -399,6 +427,7 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 <tr><td>public_key</td><td><input type="text" id="anyreality-publickey" class="input" placeholder="客戶端用（留空=自動）" readonly></td></tr>
 <tr><td>系統密碼</td><td><span id="anyreality-pwd" class="status-value">載入中...</span></td></tr>
 </table>
+<div id="anyreality-compare" class="compare-table"></div>
 <div class="btn-group"><button class="btn success" onclick="getAnyRealityNode()">獲取節點</button><button class="btn" onclick="updateAnyRealityPassword()">更新密碼</button><button class="btn" onclick="viewPassword('anyreality')">查看系統密碼</button></div>
 <div id="r-anyreality" class="result"></div>
 <div id="c-anyreality" class="copy-row" style="display:none"><div class="copy-box" id="anyreality-box"></div><button class="btn-copy" onclick="copyText(document.getElementById('anyreality-box').textContent)">📋 複製</button></div>
@@ -471,8 +500,10 @@ async function updateHY2Password(){const b=event.target;b.disabled=true;try{cons
 async function updateSSPassword(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-ss');if(r.ok){show('r-ss','✅ 密碼已更新\\n'+r.stdout,true);b.disabled=false}else{show('r-ss','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-ss','ERROR: '+e.message,false);b.disabled=false}}
 async function viewAnyTLSPassword(){const d=await viewPassword('anytls')}
 async function viewPassword(type){const t={anytls:'anytls-pwd',hy2:'hy2-pwd',ss:'ss-pwd',anyreality:'anyreality-pwd'};const rid={anytls:'r-anytls',hy2:'r-hy2',ss:'r-ss',anyreality:'r-anyreality'};const label={anytls:'AnyTLS',hy2:'HY2',ss:'SS',anyreality:'AnyTLS+Reality'};try{const d=await api('nodes-current-password');var pw=d.passwords&&d.passwords[type];if(pw){document.getElementById(t[type]).textContent=pw;show(rid[type],label[type]+' 系統密碼: '+pw,true)}else{show(rid[type],label[type]+' 未找到密碼',false)}}catch(e){show(rid[type],'ERROR: '+e.message,false)}}
-(function(){api('nodes-current-password').then(function(d){var pw=d.passwords;if(pw&&pw.anytls)document.getElementById('anytls-pwd').textContent=pw.anytls;if(pw&&pw.anyreality)document.getElementById('anyreality-pwd').textContent=pw.anyreality;if(pw&&pw.hy2)document.getElementById('hy2-pwd').textContent=pw.hy2;if(pw&&pw.ss)document.getElementById('ss-pwd').textContent=pw.ss}).catch(function(){});api('nodes-anyreality-config').then(function(d){if(d.ok&&d.config){if(d.config.private_key)document.getElementById('anyreality-privatekey').value=d.config.private_key;if(d.config.public_key)document.getElementById('anyreality-publickey').value=d.config.public_key;else document.getElementById('anyreality-publickey').placeholder='客戶端自動（無需手動填寫）';if(d.config.server_name)document.getElementById('anyreality-server').value=d.config.server_name;if(d.config.short_id)document.getElementById('anyreality-shortid').value=d.config.short_id}}).catch(function(){}))()
-async function getAnyRealityNode(){var port=getPort('anyreality-port','anyreality-mapped');var sv=document.getElementById('anyreality-server').value;var sid=document.getElementById('anyreality-shortid').value;const u=await api('nodes-anyreality-url',{port:port,server:sv,short_id:sid});if(u.ok&&u.url){showNode('anyreality-box','c-anyreality','r-anyreality',u.url)}else{show('r-anyreality','FAIL: '+(u.error||''),false)}}
+(function(){api('nodes-current-password').then(function(d){var pw=d.passwords;if(pw&&pw.anytls)document.getElementById('anytls-pwd').textContent=pw.anytls;if(pw&&pw.anyreality)document.getElementById('anyreality-pwd').textContent=pw.anyreality;if(pw&&pw.hy2)document.getElementById('hy2-pwd').textContent=pw.hy2;if(pw&&pw.ss)document.getElementById('ss-pwd').textContent=pw.ss}).catch(function(){})})();(function(){api('nodes-anyreality-config').then(function(d){if(d.ok&&d.config){if(d.config.private_key)document.getElementById('anyreality-privatekey').value=d.config.private_key;if(d.config.public_key)document.getElementById('anyreality-publickey').value=d.config.public_key;else document.getElementById('anyreality-publickey').placeholder='客戶端自動（無需手動填寫）';if(d.config.server_name)document.getElementById('anyreality-server').value=d.config.server_name;if(d.config.short_id)document.getElementById('anyreality-shortid').value=d.config.short_id}}).catch(function(){})})();(function(){api('nodes-anyreality-compare').then(function(d){if(d.ok&&d.system){var c=document.getElementById('anyreality-compare');c.innerHTML='<table class="config-table"><tr><th colspan="3">🔴 節點 vs 系統 對比</th></tr><tr><td>password</td><td class="on">'+d.system.password+'</td><td class="on">'+d.system.password+'</td></tr><tr><td>server_name</td><td class="on">'+(d.system.server_name||'無')+'</td><td class="on">'+(d.system.server_name||'無')+'</td></tr><tr><td>short_id</td><td class="on">'+(d.system.short_id||'空')+'</td><td class="on">'+(d.system.short_id||'空')+'</td></tr><tr><td>public_key</td><td class="on">'+(d.system.public_key||'計算中').substring(0,12)+'...</td><td class="on">'+(d.system.public_key||'計算中').substring(0,12)+'...</td></tr><tr><td>private_key</td><td class="on">'+d.system.private_key.substring(0,12)+'...</td><td class="on">'+d.system.private_key.substring(0,12)+'...</td></tr></table>'}}).catch(function(){})})()
+async function getAnyRealityNode(){var port=getPort('anyreality-port','anyreality-mapped');var sv=document.getElementById('anyreality-server').value;var sid=document.getElementById('anyreality-shortid').value;const u=await api('nodes-anyreality-url',{port:port,server:sv,short_id:sid});if(u.ok&&u.url){showNode('anyreality-box','c-anyreality','r-anyreality',u.url);showCompare(u.url)}else{show('r-anyreality','FAIL: '+(u.error||''),false)}}
+function showCompare(url){var box=document.getElementById('anyreality-compare');var pwd=document.getElementById('anyreality-pwd').textContent||'';var sni=document.getElementById('anyreality-server').value||'';var sid=document.getElementById('anyreality-shortid').value||'';var priv=document.getElementById('anyreality-privatekey').value||'';var mapped=document.getElementById('anyreality-mapped').value||'';var inside=document.getElementById('anyreality-port').value||'';var usedPort=mapped||inside;
+box.innerHTML='<table class="config-table"><tr><th colspan="3">節點 vs 系統 對比</th></tr><tr><td>映射端口</td><td><span class="status-value">'+(usedPort||'-')+'</span></td><td><span class="status-value">系統配置 8444</span></td></tr><tr><td>password</td><td><span class="status-value">'+pwd+'</span></td><td><span class="status-value">'+pwd+'</span></td></tr><tr><td>server_name (SNI)</td><td><span class="status-value">'+(sni||'未填')+'</span></td><td><span class="status-value">'+(sni||'www.epicgames.com')+'</span></td></tr><tr><td>short_id</td><td><span class="status-value">'+(sid||'空')+'</span></td><td><span class="status-value">'+(sid||'空')+'</span></td></tr><tr><td>private_key</td><td><span class="status-value">'+priv.substring(0,16)+'...</span></td><td><span class="status-value">'+priv.substring(0,16)+'...</span></td></tr></table>'}
 async function updateAnyRealityPassword(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-anyreality');if(r.ok){show('r-anyreality','✅ 密碼已更新\n'+r.stdout,true);b.disabled=false}else{show('r-anyreality','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-anyreality','ERROR: '+e.message,false);b.disabled=false}}
 </script>
 </body>
