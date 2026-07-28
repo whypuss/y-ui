@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
 )
 // InboundListener sing-box 監聽端口信息
@@ -210,49 +212,169 @@ func nodeProtocol(typ, flow string) string {
 	return strings.Title(typ)
 }
 
-// GenAnyTLSURL 讀取 AnyTLS inbound 配置，生成 anytls:// 標準節點連結
+// getSingboxInbounds 安全讀取 sing-box 所有 inbound 配置（主 config + conf/*.json）
+// 不會因類型斷言 panic —— 當 config.json 冇 inbounds 時返回空列表
+func getSingboxInbounds() ([]map[string]interface{}, CommandResult) {
+	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
+	if err != nil {
+		return nil, CommandResult{Ok: false, Error: "cannot read config.json: " + err.Error()}
+	}
+	var c map[string]interface{}
+	if err := json.Unmarshal(cfgBytes, &c); err != nil {
+		return nil, CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
+	}
+	var inbounds []map[string]interface{}
+	// 安全類型斷言：可能冇 inbounds 字段
+	if raw, ok := c["inbounds"].([]interface{}); ok {
+		for _, v := range raw {
+			if ii, ok := v.(map[string]interface{}); ok {
+				inbounds = append(inbounds, ii)
+			}
+		}
+	}
+	// 讀 conf/*.json 加載的配置文件
+	confDir := "/etc/sing-box/conf"
+	if entries, err := filepath.Glob(confDir + "/*.json"); err == nil {
+		sort.Strings(entries)
+		for _, fp := range entries {
+			dat, err := os.ReadFile(fp)
+			if err != nil {
+				continue
+			}
+			var fcfg map[string]interface{}
+			if err := json.Unmarshal(dat, &fcfg); err != nil {
+				continue
+			}
+			if raw, ok := fcfg["inbounds"].([]interface{}); ok {
+				for _, v := range raw {
+					if ii, ok := v.(map[string]interface{}); ok {
+						inbounds = append(inbounds, ii)
+					}
+				}
+			}
+		}
+	}
+	return inbounds, CommandResult{Ok: true}
+}
+
+// findInbound 從 inbound 列表找指定 type，返回第一個匹配 + 是否找到
+func findInbound(inbounds []map[string]interface{}, typ string) (map[string]interface{}, bool) {
+	for _, ib := range inbounds {
+		if t, ok := ib["type"]; ok && t == typ {
+			return ib, true
+		}
+	}
+	return nil, false
+}
+
+// readSingboxPassword 從 users[] 讀 password（兼容頂層 password + users 結構）
+func readSingboxPassword(ib map[string]interface{}) string {
+	if pw, ok := ib["password"].(string); ok && pw != "" {
+		return pw
+	}
+	if users, ok := ib["users"].([]interface{}); ok && len(users) > 0 {
+		if u, ok := users[0].(map[string]interface{}); ok {
+			return u["password"].(string)
+		}
+	}
+	return ""
+}
+
+// updateInboundPassword 安全更新指定 type 的 password（兼容主 config + conf/）
+func updateInboundPassword(typ string, newPw string) (string, CommandResult) {
+	// 1. 嘗試主 config.json
+	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "read: " + err.Error()}
+	}
+	var c map[string]interface{}
+	if err := json.Unmarshal(cfgBytes, &c); err != nil {
+		return "", CommandResult{Ok: false, Error: "parse: " + err.Error()}
+	}
+	if raw, ok := c["inbounds"].([]interface{}); ok {
+		for i, v := range raw {
+			if ii, ok := v.(map[string]interface{}); ok && ii["type"] == typ {
+				users, _ := ii["users"].([]interface{})
+				for _, u := range users {
+					if ui, ok := u.(map[string]interface{}); ok {
+						ui["password"] = newPw
+					}
+				}
+				if typ == "shadowsocks" {
+					ii["password"] = newPw
+				}
+				c["inbounds"].([]interface{})[i] = ii
+				out, _ := json.MarshalIndent(c, "", "  ")
+				err = os.WriteFile("/etc/sing-box/config.json", out, 0644)
+				if err == nil {
+					return "updated /etc/sing-box/config.json", CommandResult{Ok: true}
+				}
+				break
+			}
+		}
+	}
+
+	// 2. 嘗試 conf/
+	confDir := "/etc/sing-box/conf"
+	if entries, err := filepath.Glob(confDir + "/*.json"); err == nil {
+		for _, fp := range entries {
+			dat, err := os.ReadFile(fp)
+			if err != nil {
+				continue
+			}
+			var fcfg map[string]interface{}
+			if err := json.Unmarshal(dat, &fcfg); err != nil {
+				continue
+			}
+			if raw, ok := fcfg["inbounds"].([]interface{}); ok {
+				for j, v := range raw {
+					if ii, ok := v.(map[string]interface{}); ok && ii["type"] == typ {
+						users, _ := ii["users"].([]interface{})
+						for _, u := range users {
+							if ui, ok := u.(map[string]interface{}); ok {
+								ui["password"] = newPw
+							}
+						}
+						if typ == "shadowsocks" {
+							ii["password"] = newPw
+						}
+						fcfg["inbounds"].([]interface{})[j] = ii
+						out, _ := json.MarshalIndent(fcfg, "", "  ")
+						err = os.WriteFile(fp, out, 0644)
+						if err == nil {
+							return "updated " + fp, CommandResult{Ok: true}
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+
+	return "", CommandResult{Ok: false, Error: "no inbound of type " + typ + " found in config or conf/"}
+}
 func GenAnyTLSURL() (string, CommandResult) {
 	return GenAnyTLSURLWithParams("", 0)
 }
 
 // GenAnyTLSURLWithParams 帶 host/端口參數嘅版本
 func GenAnyTLSURLWithParams(host string, port int) (string, CommandResult) {
-	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
-	if err != nil {
-		return "", CommandResult{Ok: false, Error: "cannot read config.json: " + err.Error()}
+	inbounds, r := getSingboxInbounds()
+	if !r.Ok {
+		return "", r
 	}
-	var c map[string]interface{}
-	if err := json.Unmarshal(cfgBytes, &c); err != nil {
-		return "", CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
+	anytls, found := findInbound(inbounds, "anytls")
+	if !found {
+		return "", CommandResult{Ok: false, Error: "no AnyTLS inbound found in config or conf/"}
 	}
-	// 找 AnyTLS inbound，取 UUID
-	var anytls map[string]interface{}
-	for _, v := range c["inbounds"].([]interface{}) {
-		if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "anytls" {
-			anytls = ii
-			break
-		}
-	}
-	var uuid string
-	if anytls != nil {
-		users, _ := anytls["users"].([]interface{})
-		for _, u := range users {
-			if ui, ok := u.(map[string]interface{}); ok {
-				pw, _ := ui["password"].(string)
-				uuid = pw
-				break
-			}
-		}
-	}
+	uuid := readSingboxPassword(anytls)
 	if uuid == "" {
 		return "", CommandResult{Ok: false, Error: "no UUID found in AnyTLS inbound"}
 	}
-	// 取得本機公網 IP
 	publicIP, err := getPublicIP()
 	if err != nil {
 		return "", CommandResult{Ok: false, Error: "cannot get public IP: " + err.Error()}
 	}
-	// 端口默認從 config 讀
 	port2 := 17777
 	if anytls != nil {
 		p, _ := anytls["listen_port"].(float64)
@@ -317,38 +439,18 @@ func newUUID() string {
 
 // genHY2URLWithParams 生成 hysteria2:// 標準節點連結（帶 host/端口參數）
 func GenHY2URLWithParams(host string, port int) (string, CommandResult) {
-	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
-	if err != nil {
-		return "", CommandResult{Ok: false, Error: "cannot read config.json: " + err.Error()}
+	inbounds, r := getSingboxInbounds()
+	if !r.Ok {
+		return "", r
 	}
-	var c map[string]interface{}
-	if err := json.Unmarshal(cfgBytes, &c); err != nil {
-		return "", CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
-	}
-	// 找 hysteria2 inbound
-	var hy2 map[string]interface{}
-	for _, v := range c["inbounds"].([]interface{}) {
-		if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "hysteria2" {
-			hy2 = ii
-			break
-		}
-	}
-	var password string
+	hy2, _ := findInbound(inbounds, "hysteria2")
+	password := ""
 	if hy2 != nil {
-		// hysteria2 密碼可能喺頂層 password 或 users[].password
-		pw, ok := hy2["password"].(string)
-		if ok && pw != "" {
-			password = pw
-		} else if users, ok := hy2["users"].([]interface{}); ok && len(users) > 0 {
-			if u, ok := users[0].(map[string]interface{}); ok {
-				password, _ = u["password"].(string)
-			}
-		}
+		password = readSingboxPassword(hy2)
 	}
 	if password == "" {
 		password = newUUID()
 	}
-	// 端口默認 22222
 	port2 := 22222
 	if hy2 != nil {
 		p, _ := hy2["listen_port"].(float64)
@@ -374,33 +476,18 @@ func GenHY2URLWithParams(host string, port int) (string, CommandResult) {
 
 // genSSURLWithParams 生成 ss:// 標準節點連結（帶 host/端口/方法參數）
 func GenSSURLWithParams(host string, port int, method string) (string, CommandResult) {
-	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
-	if err != nil {
-		return "", CommandResult{Ok: false, Error: "cannot read config.json: " + err.Error()}
+	inbounds, r := getSingboxInbounds()
+	if !r.Ok {
+		return "", r
 	}
-	var c map[string]interface{}
-	if err := json.Unmarshal(cfgBytes, &c); err != nil {
-		return "", CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
-	}
-	// 找 shadowsocks inbound
-	var ss map[string]interface{}
-	for _, v := range c["inbounds"].([]interface{}) {
-		if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "shadowsocks" {
-			ss = ii
-			break
-		}
-	}
-	var password string
+	ss, _ := findInbound(inbounds, "shadowsocks")
+	password := ""
 	if ss != nil {
-		pw, ok := ss["password"].(string)
-		if ok && pw != "" {
-			password = pw
-		}
+		password = readSingboxPassword(ss)
 	}
 	if password == "" {
 		password = randBase64(32)
 	}
-	// 方法默認 aes-256-gcm
 	method2 := "aes-256-gcm"
 	if ss != nil {
 		m, ok := ss["method"].(string)
@@ -429,7 +516,6 @@ func GenSSURLWithParams(host string, port int, method string) (string, CommandRe
 	if host != "" {
 		host2 = host
 	}
-	// ss://base64(method:password@host:port)#name
 	creds := fmt.Sprintf("%s:%s", method2, password)
 	encoded := base64.URLEncoding.EncodeToString([]byte(creds))
 	urlStr := fmt.Sprintf("ss://%s@%s:%d#ss-%s", encoded, host2, port2, host2)
@@ -443,142 +529,51 @@ func randBase64(n int) string {
 	return base64.RawStdEncoding.EncodeToString(b)
 }
 
-// updateHY2Password 生成新密碼 → 寫入 config.json hysteria2 users[].password → 重啟
+// updateHY2Password 生成新密碼 → 寫入配置 → 重啟
 func UpdateHY2Password() (string, CommandResult) {
 	newPw := newUUID()
-	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
-	if err != nil {
-		return "", CommandResult{Ok: false, Error: "read config.json: " + err.Error()}
-	}
-	var c map[string]interface{}
-	if err := json.Unmarshal(cfgBytes, &c); err != nil {
-		return "", CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
-	}
-	found := false
-	for i, v := range c["inbounds"].([]interface{}) {
-		if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "hysteria2" {
-			users, _ := ii["users"].([]interface{})
-			for _, u := range users {
-				if ui, ok := u.(map[string]interface{}); ok {
-					ui["password"] = newPw
-					found = true
-				}
-			}
-			c["inbounds"].([]interface{})[i] = ii
-			break
-		}
-	}
-	if !found {
-		return "", CommandResult{Ok: false, Error: "no hysteria2 inbound found"}
-	}
-	out, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return "", CommandResult{Ok: false, Error: "marshal config: " + err.Error()}
-	}
-	err = os.WriteFile("/etc/sing-box/config.json", out, 0644)
-	if err != nil {
-		return "", CommandResult{Ok: false, Error: "write config.json: " + err.Error()}
-	}
-	r := RestartSingbox(nil)
+	msg, r := updateInboundPassword("hysteria2", newPw)
 	if !r.Ok {
-		return "", CommandResult{Ok: false, Error: "restart sing-box failed: " + r.Error}
+		return "", r
+	}
+	r2 := RestartSingbox(nil)
+	if !r2.Ok {
+		return "", CommandResult{Ok: false, Error: "restart sing-box failed: " + r2.Error}
 	}
 	return newPw, CommandResult{
-		Ok:     true,
-		Stdout: "HY2 password updated: " + newPw + "\n" + r.Stdout,
-		Stderr: r.Stderr,
+		Ok: true, Stdout: "HY2 password updated: " + newPw + "\n" + msg + "\n" + r2.Stdout, Stderr: r2.Stderr,
 	}
 }
 
-// updateSSPassword 生成新密碼 → 寫入 config.json shadowsocks password → 重啟
+// updateSSPassword 生成新密碼 → 寫入配置 → 重啟
 func UpdateSSPassword() (string, CommandResult) {
 	newPw := randBase64(32)
-	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
-	if err != nil {
-		return "", CommandResult{Ok: false, Error: "read config.json: " + err.Error()}
-	}
-	var c map[string]interface{}
-	if err := json.Unmarshal(cfgBytes, &c); err != nil {
-		return "", CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
-	}
-	found := false
-	for i, v := range c["inbounds"].([]interface{}) {
-		if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "shadowsocks" {
-			ii["password"] = newPw
-			c["inbounds"].([]interface{})[i] = ii
-			found = true
-			break
-		}
-	}
-	if !found {
-		return "", CommandResult{Ok: false, Error: "no shadowsocks inbound found"}
-	}
-	out, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return "", CommandResult{Ok: false, Error: "marshal config: " + err.Error()}
-	}
-	err = os.WriteFile("/etc/sing-box/config.json", out, 0644)
-	if err != nil {
-		return "", CommandResult{Ok: false, Error: "write config.json: " + err.Error()}
-	}
-	r := RestartSingbox(nil)
+	msg, r := updateInboundPassword("shadowsocks", newPw)
 	if !r.Ok {
-		return "", CommandResult{Ok: false, Error: "restart sing-box failed: " + r.Error}
+		return "", r
+	}
+	r2 := RestartSingbox(nil)
+	if !r2.Ok {
+		return "", CommandResult{Ok: false, Error: "restart sing-box failed: " + r2.Error}
 	}
 	return newPw, CommandResult{
-		Ok:     true,
-		Stdout: "SS password updated: " + newPw + "\n" + r.Stdout,
-		Stderr: r.Stderr,
+		Ok: true, Stdout: "SS password updated: " + newPw + "\n" + msg + "\n" + r2.Stdout, Stderr: r2.Stderr,
 	}
 }
 
-// UpdateAnyTLSUUID 生成新 UUID → 寫入 config.json → 重啟 sing-box
+// UpdateAnyTLSUUID 生成新 UUID → 寫入配置 → 重啟 sing-box
 func UpdateAnyTLSUUID() (string, CommandResult) {
-	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
-	if err != nil {
-		return "", CommandResult{Ok: false, Error: "read config.json: " + err.Error()}
-	}
-	var c map[string]interface{}
-	if err := json.Unmarshal(cfgBytes, &c); err != nil {
-		return "", CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
-	}
-	new := newUUID()
-	// 寫入 AnyTLS inbound
-	found := false
-	for i, v := range c["inbounds"].([]interface{}) {
-		if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "anytls" {
-			users, _ := ii["users"].([]interface{})
-			for _, u := range users {
-				if ui, ok := u.(map[string]interface{}); ok {
-					ui["password"] = new
-					found = true
-				}
-			}
-			c["inbounds"].([]interface{})[i] = ii
-			break
-		}
-	}
-	if !found {
-		return "", CommandResult{Ok: false, Error: "no AnyTLS inbound found"}
-	}
-	// 寫回 config.json
-	out, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return "", CommandResult{Ok: false, Error: "marshal config: " + err.Error()}
-	}
-	// 直接寫入 config.json（面板以 root 運行）
-	err = os.WriteFile("/etc/sing-box/config.json", out, 0644)
-	if err != nil {
-		return "", CommandResult{Ok: false, Error: "write config.json: " + err.Error()}
-	}
-	// 重啟 sing-box 使生效
-	r := RestartSingbox(nil)
+	newUUID := newUUID()
+	msg, r := updateInboundPassword("anytls", newUUID)
 	if !r.Ok {
-		return "", CommandResult{Ok: false, Error: "restart sing-box failed: " + r.Error}
+		return "", r
 	}
-	return new, CommandResult{
-		Ok:     true,
-		Stdout: "UUID updated: " + new + "\n" + r.Stdout,
-		Stderr: r.Stderr,
+	r2 := RestartSingbox(nil)
+	if !r2.Ok {
+		return "", CommandResult{Ok: false, Error: "restart sing-box failed: " + r2.Error}
+	}
+	return newUUID, CommandResult{
+		Ok: true, Stdout: "UUID updated: " + newUUID + "\n" + msg + "\n" + r2.Stdout, Stderr: r2.Stderr,
 	}
 }
+
