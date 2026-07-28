@@ -362,7 +362,20 @@ async function iptablesClear(){const r=await api('iptables-clear');show('r-iptab
 async function iptablesRules(){const r=await api('iptables-rules');show('r-iptables','RULES:\n'+(r.stdout||'')+(r.stderr?'stderr: '+r.stderr:''),r.ok)}
 async function loadIptablesConfig(){try{const r=await api('iptables-get');document.getElementById('i-iface').value=r.interface||'';document.getElementById('i-port').value=r.tproxy_port||'';document.getElementById('i-router').value=r.router_ip||'';document.getElementById('i-lan').value=r.lan_subnet||'';document.getElementById('i-tproxy80').checked=r.tproxy_80||false;document.getElementById('i-tproxy443').checked=r.tproxy_443||false;document.getElementById('i-dns').checked=r.dns_forward||false;document.getElementById('i-masq').checked=r.masquerade||false;document.getElementById('i-fwd').checked=r.forward||false;document.getElementById('i-excl').checked=r.exclude_self||false}catch(e){}}
 async function loadPublicIP(){api('nodes-public-ip').then(function(d){if(d.ok)document.getElementById('pubip').textContent=d.ip;else document.getElementById('pubip').textContent='載入失敗'}).catch(function(){document.getElementById('pubip').textContent='載入失敗'})}
-async function loadInboundPorts(){try{const r=await api('nodes-inbound');if(r.listeners&&r.listeners.length>0){r.listeners.forEach(function(x){var t=(x.tag||'').toLowerCase();if(t.indexOf('anytls')>=0)document.getElementById('anytls-port').value=x.port;else if(t.indexOf('hysteria2')>=0||t.indexOf('hy2')>=0)document.getElementById('hy2-port').value=x.port;else if(t.indexOf('shadowsocks')>=0||t.indexOf('ss-')>=0)document.getElementById('ss-port').value=x.port})}}catch(e){}}
+// 本地緩存：輸入框端口不丟失
+function lcGet(k){try{return localStorage.getItem(k)}catch(e){return null}}
+function lcSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+async function loadInboundPorts(){try{const r=await api('nodes-inbound');var fromAPI={};if(r.listeners&&r.listeners.length>0){r.listeners.forEach(function(x){var t=(x.tag||'').toLowerCase();if(t.indexOf('anytls')>=0)fromAPI.anytls=x.port;else if(t.indexOf('hysteria2')>=0||t.indexOf('hy2')>=0)fromAPI.hy2=x.port;else if(t.indexOf('shadowsocks')>=0||t.indexOf('ss-')>=0)fromAPI.ss=x.port})}}catch(e){}
+['anytls','hy2','ss'].forEach(function(p){
+  var lp=lcGet(p+'-port');var mp=lcGet(p+'-mapped');
+  if(lp)document.getElementById(p+'-port').value=lp;
+  else if(fromAPI[p])document.getElementById(p+'-port').value=fromAPI[p];
+  if(mp)document.getElementById(p+'-mapped').value=mp;
+});
+// 緩存 ss-method
+var sm=lcGet('ss-method');if(sm)document.getElementById('ss-method').value=sm;
+// 監聽所有輸入框變化即時寫回 localStorage
+['anytls-port','anytls-mapped','hy2-port','hy2-mapped','ss-port','ss-mapped','ss-method'].forEach(function(id){var e=document.getElementById(id);if(e)e.addEventListener('input',function(){lcSet(id,e.value)})})}
 function showNode(boxId,copyId,resultId,url){document.getElementById(boxId).textContent=url;document.getElementById(copyId).style.display='flex';show(resultId,'✅ 已生成',true)}
 function getPort(insideId,mappedId){var m=document.getElementById(mappedId).value;return parseInt(m)||parseInt(document.getElementById(insideId).value)||0}
 async function getAnyTLSNode(){var port=getPort('anytls-port','anytls-mapped');const u=await api('nodes-url',{port:port});if(u.ok&&u.url){showNode('anytls-box','c-anytls','r-anytls',u.url)}else{show('r-anytls','FAIL: '+(u.error||''),false)}}
