@@ -111,7 +111,7 @@ install_singbox() {
 
     if [ "$version" = "latest" ]; then
         info "檢測 sing-box 最新穩定版..."
-        version=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+' | sed 's/^v//')
+        version=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep -o '"tag_name": "[^"]*"' | sed 's/"tag_name": "//; s/"//' | sed 's/^v//')
         info "最新穩定版: v${version}"
     fi
     echo -e "  ${GREEN}sing-box 版本:${NC} ${YELLOW}${version}${NC} (linux-${arch})"
@@ -158,7 +158,8 @@ install_yui() {
     # 1. 嘗試從 GitHub Release 自動下載
     local release_bin
     release_bin=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" 2>/dev/null | \
-        grep -oP '"browser_download_url": "\K[^"]*y-ui-linux-'"${arch}"'[^"]*' | head -1)
+        grep -o '"browser_download_url": "[^"]*y-ui-linux-'"${arch}"'[^"]*"' | \
+        sed 's/"browser_download_url": "//; s/"$//' | head -1)
 
     if [ -n "$release_bin" ]; then
         info "從 GitHub Release 下載 y-ui (${arch})..."
