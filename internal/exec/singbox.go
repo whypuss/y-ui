@@ -12,13 +12,12 @@ import (
 
 // SystemStatus 系統狀態
 type SystemStatus struct {
-	SingboxRunning  bool   `json:"singbox_running"`
-	SingboxInfo     string `json:"singbox_info"`
-	TunActive       bool   `json:"tun_active"`
-	TunInfo         string `json:"tun_info"`
-	TproxyActive    bool   `json:"tproxy_active"`
-	DirectNet       bool   `json:"direct_net"`
-	ContainerOllama bool   `json:"container_ollama"`
+	SingboxRunning bool   `json:"singbox_running"`
+	SingboxInfo    string `json:"singbox_info"`
+	TunActive      bool   `json:"tun_active"`
+	TunInfo        string `json:"tun_info"`
+	TproxyActive   bool   `json:"tproxy_active"`
+	DirectNet      bool   `json:"direct_net"`
 }
 
 // CommandResult 指令執行結果
@@ -192,9 +191,6 @@ func GetSystemStatus() SystemStatus {
 	// 外網可達
 	s.DirectNet = checkDirectNet()
 
-	// 容器連 Mac Ollama
-	s.ContainerOllama = checkContainerOllama()
-
 	return s
 }
 
@@ -256,14 +252,7 @@ func checkDirectNet() bool {
 	return code == "200" || code == "301" || code == "302"
 }
 
-func checkContainerOllama() bool {
-	cmd := exec.Command("sh", "-c", `docker exec mem0-dev-mem0-1 timeout 5 python3 -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('192.168.31.111',11434)); print('OK')" 2>/dev/null`)
-	out, _ := cmd.Output()
-	return strings.TrimSpace(string(out)) == "OK"
-}
-
-// FixSingboxDNS 已棄用（用 json.dump 覆蓋整份 config.json，風險高）
-// 改用 setTunAutoRoute() 單獨修改 auto_route 字段
+// FixSingboxDNS 已棄用
 func FixSingboxDNS(ctx context.Context) CommandResult {
 	_ = ctx
 	return CommandResult{Ok: false, Error: "deprecated: use setTunAutoRoute instead"}
@@ -365,8 +354,9 @@ func TproxyOff(ctx context.Context) CommandResult {
 	// 清理 mangle + 移除 iproute TPROXY rule
 	script := `iptables -t mangle -F; ip6tables -t mangle -F 2>/dev/null; ip rule del fwmark 0x1/0x1 lookup 100 2>/dev/null; ip route del local 0.0.0.0/0 dev lo table 100 2>/dev/null; echo "TProxy disabled - mangle cleared, iproute rules removed"`
 	r := runCommandWithSudo([]string{"sh", "-c", script})
-	// 恢復網關基礎規則，確保 LAN 設備仍可直連上網
-	_ = RestoreGateway("enp4s0f0", "192.168.31.0/24")
+	// 恢復網關基礎規則（使用保存嘅 iptables 配置）
+	cfg := ReadIptablesConfig()
+	_ = RestoreGateway(cfg.Interface, cfg.LANSubnet)
 	_ = ctx
 	return r
 }
@@ -444,8 +434,9 @@ fi
 ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | wc -l
 `)
 	r := runCommandWithSudo([]string{"sh", "-c", buf.String()})
-	// 恢復網關基礎規則，確保 LAN 設備仍可直連上網
-	_ = RestoreGateway("enp4s0f0", "192.168.31.0/24")
+	// 恢復網關基礎規則（使用保存嘅 iptables 配置）
+	cfg := ReadIptablesConfig()
+	_ = RestoreGateway(cfg.Interface, cfg.LANSubnet)
 	return r
 }
 

@@ -1,60 +1,72 @@
 #!/bin/bash
-# deploy.sh - 部署控制面板到 VPS
-# 用法: bash deploy.sh
-# 環境變量: VPS_HOST VPS_USER VPS_PASS REMOTE_DIR PANEL_PORT
-# 默认: VPS_HOST=192.168.31.55 VPS_USER=maxwell REMOTE_DIR=/opt/singbox-panel PANEL_PORT=19999
+# deploy.sh - 舊版 SSH 部署腳本（已廢棄，請改用 install.sh）
+#
+# 新功能腳本:
+#   curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/install.sh | sudo bash -s -- --full
+#
+# 保留此腳本僅供參考，不會再維護。
+# ============================================================
 set -e
 
-VPS_HOST="${VPS_HOST:-192.168.31.55}"
-VPS_USER="${VPS_USER:-maxwell}"
+VPS_HOST="${VPS_HOST:-}"
+VPS_USER="${VPS_USER:-}"
 VPS_PASS="${VPS_PASS:-}"
 REMOTE_DIR="${REMOTE_DIR:-/opt/singbox-panel}"
 PORT="${PANEL_PORT:-19999}"
 
-if [ -z "$VPS_PASS" ]; then
-    echo "ERROR: VPS_PASS not set. Source .env or export VPS_PASS=xxx"
-    echo "Example: source ~/.hermes/profiles/puss_profile/.env"
+echo "=== 舊版部署腳本（已廢棄）==="
+echo "請改用 install.sh:"
+echo "  curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/install.sh | sudo bash -s -- --full"
+echo ""
+
+if [ -z "$VPS_HOST" ]; then
+    echo "ERROR: 請設定 VPS_HOST 環境變量"
+    echo "  export VPS_HOST=your-vps-ip"
     exit 1
 fi
 
+if [ -z "$VPS_PASS" ]; then
+    echo "ERROR: 請設定 VPS_PASS 環境變量"
+    echo "  export VPS_PASS=your-password"
+    exit 1
+fi
+
+echo "目標: ${VPS_USER:-$USER}@${VPS_HOST}:${REMOTE_DIR}"
+echo "端口: ${PORT}"
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "=== 部署 Sing-Box 控制面板 ==="
-echo "目标: $VPS_USER@$VPS_HOST:$REMOTE_DIR"
-
-# 1. 打包
+# 1. 打包（排除自身和敏感文件）
 TMP_ARCHIVE="/tmp/singbox-panel.tar.gz"
-tar -czf "$TMP_ARCHIVE" -C "$SCRIPT_DIR" .
+tar -czf "$TMP_ARCHIVE" -C "$SCRIPT_DIR" \
+    --exclude='deploy.sh' --exclude='.env' --exclude='*.key' --exclude='*.pem' \
+    --exclude='.git' --exclude='*.zip' \
+    . 2>/dev/null
 
-# 2. 用 sshpass + base64 传输
-echo "[$(basename "$TMP_ARCHIVE")] 大小: $(du -h "$TMP_ARCHIVE" | cut -f1)"
-echo "传输中..."
+echo "[${TMP_ARCHIVE}] 大小: $(du -h "$TMP_ARCHIVE" | cut -f1)"
+echo "傳輸中..."
 
 B64=$(base64 "$TMP_ARCHIVE")
-sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$VPS_USER@$VPS_HOST" \
-    "mkdir -p $REMOTE_DIR && echo '$B64' | base64 -d | tar -xzf - -C $REMOTE_DIR && echo TRANSMIT_OK"
+sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${VPS_USER:-$USER}@${VPS_HOST}" \
+    "mkdir -p ${REMOTE_DIR} && echo '${B64}' | base64 -d | tar -xzf - -C ${REMOTE_DIR} && echo TRANSMIT_OK"
 
-# 3. 确认
 echo "部署文件列表:"
-sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$VPS_USER@$VPS_HOST" \
-    "ls -la $REMOTE_DIR"
+sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${VPS_USER:-$USER}@${VPS_HOST}" \
+    "ls -la ${REMOTE_DIR}"
 
-# 4. 启动面板
-echo "启动面板 (端口 $PORT)..."
-sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$VPS_USER@$VPS_HOST" \
-    "export SINGBOX_SUDO_PASS='$VPS_PASS' && SINGBOX_PANEL_PORT=$PORT PIPX_HOME=/opt/pipx SUDO_ASKPASS='/opt/singbox-panel/sshpass-cmd' sudo -S nohup python3 $REMOTE_DIR/panel.py > $REMOTE_DIR/panel.log 2>&1 & echo PID=\$!"
+echo "啟動面板 (端口 ${PORT})..."
+sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${VPS_USER:-$USER}@${VPS_HOST}" \
+    "export SINGBOX_SUDO_PASS='${VPS_PASS}' && SINGBOX_PANEL_PORT=${PORT} sudo -S nohup python3 ${REMOTE_DIR}/panel.py > ${REMOTE_DIR}/panel.log 2>&1 & echo PID=\$!"
 
 sleep 2
 
-# 5. 验证
-echo "检查端口..."
-sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$VPS_USER@$VPS_HOST" \
-    "ss -tlnp | grep $PORT || echo PORT_NOT_LISTENING"
+echo "檢查端口..."
+sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${VPS_USER:-$USER}@${VPS_HOST}" \
+    "ss -tlnp | grep ${PORT} || echo PORT_NOT_LISTENING"
 
 echo ""
 echo "=== 部署完成 ==="
-echo "访问: http://$VPS_HOST:$PORT/"
-echo "日志: $REMOTE_DIR/panel.log"
-echo "停止: sudo kill \$(cat $REMOTE_DIR/panel.pid)"
+echo "訪問: http://${VPS_HOST}:${PORT}/"
+echo "日誌: ${REMOTE_DIR}/panel.log"
 
 rm -f "$TMP_ARCHIVE"

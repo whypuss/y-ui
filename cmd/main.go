@@ -21,7 +21,8 @@ func main() {
 	}
 
 	// 啟動時確保網關基礎規則在位（FORWARD + MASQUERADE）
-	_ = exec.RestoreGateway("enp4s0f0", "192.168.31.0/24")
+	// 注：這裡的網卡/網段係示例，請根據實際環境修改
+	_ = exec.RestoreGateway("eth0", "192.168.1.0/24")
 
 	srv := web.NewServer()
 	srv.SetStatus(exec.GetSystemStatus)

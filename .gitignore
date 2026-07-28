@@ -1,6 +1,10 @@
-
 y-ui-latest
 y-ui-linux-amd64
 y-ui-v2
 y-ui-v3
 y-ui-fix
+y-ui
+y-ui-linux-amd64
+*.tar.gz
+*.zip
+backup*

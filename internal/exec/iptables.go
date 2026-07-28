@@ -52,11 +52,12 @@ func WriteIptablesConfig(cfg IptablesConfig) CommandResult {
 }
 
 func defaultIptablesConfig() IptablesConfig {
+	// 注：這些係示例值，用戶可透過面板「iptables 配置」修改
 	return IptablesConfig{
-		Interface:  "enp4s0f0",
+		Interface:  "eth0",
 		TproxyPort: 10808,
-		RouterIP:   "192.168.31.1",
-		LANSubnet:  "192.168.31.0/24",
+		RouterIP:   "192.168.1.1",
+		LANSubnet:  "192.168.1.0/24",
 	}
 }
 

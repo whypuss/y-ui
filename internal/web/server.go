@@ -106,8 +106,9 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		result = exec.ApplyIptables(nil, cfg)
 	case "iptables-clear":
 		result = exec.ClearIptables(nil)
-		// 清完之後恢復網關基礎規則，確保 LAN 設備仍可直連上網
-		_ = exec.RestoreGateway("enp4s0f0", "192.168.31.0/24")
+		// 清完之後恢復網關基礎規則（用保存嘅 iptables 配置）
+		c := exec.ReadIptablesConfig()
+		_ = exec.RestoreGateway(c.Interface, c.LANSubnet)
 	case "iptables-rules":
 		result = exec.IptablesRules()
 	case "iptables-get":
@@ -287,10 +288,10 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 <div class="card">
 <div class="card-title">iptables 配置</div><div class="card-desc">填寫參數，勾選規則，按 Apply 生效</div>
 <table class="config-table">
-<tr><td>網卡 (IFACE)</td><td><input type="text" id="i-iface" class="input" value="enp4s0f0"></td></tr>
+<tr><td>網卡 (IFACE)</td><td><input type="text" id="i-iface" class="input" value="eth0"></td></tr>
 <tr><td>TProxy 端口</td><td><input type="number" id="i-port" class="input" value="10808"></td></tr>
-<tr><td>路由器 IP (DNS)</td><td><input type="text" id="i-router" class="input" value="192.168.31.1"></td></tr>
-<tr><td>LAN 網段</td><td><input type="text" id="i-lan" class="input" value="192.168.31.0/24"></td></tr>
+<tr><td>路由器 IP (DNS)</td><td><input type="text" id="i-router" class="input" value="192.168.1.1"></td></tr>
+<tr><td>LAN 網段</td><td><input type="text" id="i-lan" class="input" value="192.168.1.0/24"></td></tr>
 </table>
 <div class="checkbox-group">
 <label class="checkbox"><input type="checkbox" id="i-tproxy80" checked> TPROXY :80</label>
@@ -359,7 +360,7 @@ async function iptablesSave(){const c=iptablesForm();const r=await api('iptables
 async function iptablesApply(){const r=await api('iptables-apply');show('r-iptables',(r.ok?'APPLIED\n':'FAIL\n')+(r.stdout||'')+(r.stderr?'stderr: '+r.stderr:''),r.ok);refreshStatus()}
 async function iptablesClear(){const r=await api('iptables-clear');show('r-iptables',(r.ok?'CLEARED\n':'FAIL\n')+(r.stdout||''),r.ok);refreshStatus()}
 async function iptablesRules(){const r=await api('iptables-rules');show('r-iptables','RULES:\n'+(r.stdout||'')+(r.stderr?'stderr: '+r.stderr:''),r.ok)}
-async function loadIptablesConfig(){try{const r=await api('iptables-get');if(r.interface==='enp4s0f0'&&r.tproxy_port===10808&&r.router_ip==='192.168.31.1')return;document.getElementById('i-iface').value=r.interface||'';document.getElementById('i-port').value=r.tproxy_port||'';document.getElementById('i-router').value=r.router_ip||'';document.getElementById('i-lan').value=r.lan_subnet||'';document.getElementById('i-tproxy80').checked=r.tproxy_80||false;document.getElementById('i-tproxy443').checked=r.tproxy_443||false;document.getElementById('i-dns').checked=r.dns_forward||false;document.getElementById('i-masq').checked=r.masquerade||false;document.getElementById('i-fwd').checked=r.forward||false;document.getElementById('i-excl').checked=r.exclude_self||false}catch(e){}}
+async function loadIptablesConfig(){try{const r=await api('iptables-get');document.getElementById('i-iface').value=r.interface||'';document.getElementById('i-port').value=r.tproxy_port||'';document.getElementById('i-router').value=r.router_ip||'';document.getElementById('i-lan').value=r.lan_subnet||'';document.getElementById('i-tproxy80').checked=r.tproxy_80||false;document.getElementById('i-tproxy443').checked=r.tproxy_443||false;document.getElementById('i-dns').checked=r.dns_forward||false;document.getElementById('i-masq').checked=r.masquerade||false;document.getElementById('i-fwd').checked=r.forward||false;document.getElementById('i-excl').checked=r.exclude_self||false}catch(e){}}
 async function loadPublicIP(){api('nodes-public-ip').then(function(d){if(d.ok)document.getElementById('pubip').textContent=d.ip;else document.getElementById('pubip').textContent='載入失敗'}).catch(function(){document.getElementById('pubip').textContent='載入失敗'})}
 async function loadInboundPorts(){try{const r=await api('nodes-inbound');if(r.listeners&&r.listeners.length>0){r.listeners.forEach(function(x){var t=(x.tag||'').toLowerCase();if(t.indexOf('anytls')>=0)document.getElementById('anytls-port').value=x.port;else if(t.indexOf('hysteria2')>=0||t.indexOf('hy2')>=0)document.getElementById('hy2-port').value=x.port;else if(t.indexOf('shadowsocks')>=0||t.indexOf('ss-')>=0)document.getElementById('ss-port').value=x.port})}}catch(e){}}
 function showNode(boxId,copyId,resultId,url){document.getElementById(boxId).textContent=url;document.getElementById(copyId).style.display='flex';show(resultId,'✅ 已生成',true)}
