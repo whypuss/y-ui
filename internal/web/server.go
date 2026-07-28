@@ -184,7 +184,17 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		pwMap := map[string]string{}
 		for _, ib := range inbounds {
 			if t, ok := ib["type"]; ok {
-				pwMap[t.(string)] = exec.ReadSingboxPassword(ib)
+				tstr := t.(string)
+				pw := exec.ReadSingboxPassword(ib)
+				// 映射為前端友好的鍵名
+				switch tstr {
+				case "hysteria2":
+					pwMap["hy2"] = pw
+				case "shadowsocks":
+					pwMap["ss"] = pw
+				default:
+					pwMap[tstr] = pw
+				}
 			}
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "passwords": pwMap})
@@ -342,8 +352,9 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 <table class="config-table">
 <tr><td>內部端口</td><td><input type="number" id="hy2-port" class="input" placeholder="20000"></td></tr>
 <tr><td>映射端口</td><td><input type="number" id="hy2-mapped" class="input" placeholder="留空=內部端口"></td></tr>
+<tr><td>系統密碼</td><td><span id="hy2-pwd" class="status-value">載入中...</span></td></tr>
 </table>
-<div class="btn-group"><button class="btn success" onclick="getHY2Node()">獲取節點</button><button class="btn" onclick="updateHY2Password()">更新密碼</button></div>
+<div class="btn-group"><button class="btn success" onclick="getHY2Node()">獲取節點</button><button class="btn" onclick="updateHY2Password()">更新密碼</button><button class="btn" onclick="viewPassword('hy2')">查看系統密碼</button></div>
 <div id="r-hy2" class="result"></div>
 <div id="c-hy2" class="copy-row" style="display:none"><div class="copy-box" id="hy2-box"></div><button class="btn-copy" onclick="copyText(document.getElementById('hy2-box').textContent)">📋 複製</button></div>
 </div>
@@ -355,8 +366,9 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 <tr><td>內部端口</td><td><input type="number" id="ss-port" class="input" placeholder="20001"></td></tr>
 <tr><td>映射端口</td><td><input type="number" id="ss-mapped" class="input" placeholder="留空=內部端口"></td></tr>
 <tr><td>加密</td><td><select id="ss-method" class="input"><option>aes-256-gcm</option><option>aes-128-gcm</option><option>chacha20-poly1305</option><option>chacha20-ietf-poly1305</option></select></td></tr>
+<tr><td>系統密碼</td><td><span id="ss-pwd" class="status-value">載入中...</span></td></tr>
 </table>
-<div class="btn-group"><button class="btn success" onclick="getSSNode()">獲取節點</button><button class="btn" onclick="updateSSPassword()">更新密碼</button></div>
+<div class="btn-group"><button class="btn success" onclick="getSSNode()">獲取節點</button><button class="btn" onclick="updateSSPassword()">更新密碼</button><button class="btn" onclick="viewPassword('ss')">查看系統密碼</button></div>
 <div id="r-ss" class="result"></div>
 <div id="c-ss" class="copy-row" style="display:none"><div class="copy-box" id="ss-box"></div><button class="btn-copy" onclick="copyText(document.getElementById('ss-box').textContent)">📋 複製</button></div>
 </div>
@@ -399,8 +411,9 @@ async function getSSNode(){var port=getPort('ss-port','ss-mapped');var method=do
 async function updateAnyTLSUUID(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-uuid');if(r.ok){show('r-anytls','✅ UUID 已更新\n'+r.stdout,true);b.disabled=false}else{show('r-anytls','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-anytls','ERROR: '+e.message,false);b.disabled=false}}
 async function updateHY2Password(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-hy2');if(r.ok){show('r-hy2','✅ 密碼已更新\n'+r.stdout,true);b.disabled=false}else{show('r-hy2','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-hy2','ERROR: '+e.message,false);b.disabled=false}}
 async function updateSSPassword(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-ss');if(r.ok){show('r-ss','✅ 密碼已更新\\n'+r.stdout,true);b.disabled=false}else{show('r-ss','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-ss','ERROR: '+e.message,false);b.disabled=false}}
-async function viewAnyTLSPassword(){try{const d=await api('nodes-current-password');const pw=d.passwords&&d.passwords.anytls;if(pw){document.getElementById('anytls-pwd').textContent=pw;show('r-anytls','系統密碼: '+pw,true)}else{show('r-anytls','未找到 AnyTLS 密碼',false)}}catch(e){show('r-anytls','ERROR: '+e.message,false)}}
-(function(){api('nodes-current-password').then(function(d){if(d.passwords&&d.passwords.anytls)document.getElementById('anytls-pwd').textContent=d.passwords.anytls}).catch(function(){})})()
+async function viewAnyTLSPassword(){const d=await viewPassword('anytls')}
+async function viewPassword(type){const t={anytls:'anytls-pwd',hy2:'hy2-pwd',ss:'ss-pwd'};const rid={anytls:'r-anytls',hy2:'r-hy2',ss:'r-ss'};const label={anytls:'AnyTLS',hy2:'HY2',ss:'SS'};try{const d=await api('nodes-current-password');var pw=d.passwords&&d.passwords[type];if(pw){document.getElementById(t[type]).textContent=pw;show(rid[type],label[type]+' 系統密碼: '+pw,true)}else{show(rid[type],label[type]+' 未找到密碼',false)}}catch(e){show(rid[type],'ERROR: '+e.message,false)}}
+(function(){api('nodes-current-password').then(function(d){var pw=d.passwords;if(pw&&pw.anytls)document.getElementById('anytls-pwd').textContent=pw.anytls;if(pw&&pw.hy2)document.getElementById('hy2-pwd').textContent=pw.hy2;if(pw&&pw.ss)document.getElementById('ss-pwd').textContent=pw.ss}).catch(function(){})})()
 </script>
 </body>
 </html>`

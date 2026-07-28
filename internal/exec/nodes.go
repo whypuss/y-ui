@@ -275,7 +275,9 @@ func ReadSingboxPassword(ib map[string]interface{}) string {
 	}
 	if users, ok := ib["users"].([]interface{}); ok && len(users) > 0 {
 		if u, ok := users[0].(map[string]interface{}); ok {
-			return u["password"].(string)
+			if pw, ok := u["password"].(string); ok {
+				return pw
+			}
 		}
 	}
 	return ""

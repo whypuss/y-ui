@@ -280,7 +280,7 @@ else
     nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 &
     sleep 3
 fi
-ps -eo pid,lstart,args | grep "sing-box run -c" | grep -v grep
+ps -eo pid,lstart,args 2>/dev/null | grep "sing-box run -c" | grep -v grep || true
 `})
 
 	return CommandResult{
