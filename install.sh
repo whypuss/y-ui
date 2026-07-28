@@ -65,6 +65,20 @@ detect_systemd() {
     fi
 }
 
+# SERVICE_TYPE: systemd / openrc / none
+detect_service_manager() {
+    if detect_systemd; then
+        echo "systemd"
+        return 0
+    elif [ -d /etc/init.d ] && [ -f /sbin/openrc-run ]; then
+        echo "openrc"
+        return 0
+    else
+        echo "none"
+        return 1
+    fi
+}
+
 # ---------- 安裝依賴 ----------
 
 install_deps() {
@@ -221,10 +235,14 @@ install_yui() {
     ok "y-ui 安裝至 ${PANEL_DIR}/y-ui"
 }
 
-# ---------- y-ui systemd service ----------
+# ---------- y-ui service (systemd / OpenRC) ----------
 
 install_yui_service() {
-    cat > /etc/systemd/system/y-ui.service << SVCEOF
+    local sm
+    sm=$(detect_service_manager)
+
+    if [ "$sm" = "systemd" ]; then
+        cat > /etc/systemd/system/y-ui.service << SVCEOF
 [Unit]
 Description=y-ui Web Panel
 After=network.target
@@ -240,16 +258,37 @@ LimitNOFILE=65535
 [Install]
 WantedBy=multi-user.target
 SVCEOF
-
-    systemctl daemon-reload
-    systemctl enable y-ui
-    ok "y-ui systemd service 已安裝 (端口 ${PANEL_PORT})"
+        systemctl daemon-reload
+        systemctl enable y-ui
+        ok "y-ui systemd service 已安裝 (端口 ${PANEL_PORT})"
+    elif [ "$sm" = "openrc" ]; then
+        cat > /etc/init.d/y-ui << INITEOF
+#!/sbin/openrc-run
+name="y-ui Web Panel"
+description="y-ui Sing-Box 控制面板"
+command="${PANEL_DIR}/y-ui"
+command_args="-port ${PANEL_PORT}"
+command_background="yes"
+pidfile="/run/y-ui.pid"
+command_user="root"
+INITEOF
+        chmod +x /etc/init.d/y-ui
+        rc-update add y-ui default 2>/dev/null || true
+        ok "y-ui OpenRC init 已安裝 (端口 ${PANEL_PORT})"
+    else
+        warn "無 service manager，y-ui 需手動啟動"
+        info "手動啟動: ${PANEL_DIR}/y-ui -port ${PANEL_PORT} &"
+    fi
 }
 
-# ---------- sing-box systemd service ----------
+# ---------- sing-box service (systemd / OpenRC) ----------
 
 install_singbox_service() {
-    cat > /etc/systemd/system/sing-box.service << SVCEOF
+    local sm
+    sm=$(detect_service_manager)
+
+    if [ "$sm" = "systemd" ]; then
+        cat > /etc/systemd/system/sing-box.service << SVCEOF
 [Unit]
 Description=sing-box proxy service
 After=network-online.target
@@ -269,10 +308,27 @@ LimitNOFILE=1048576
 [Install]
 WantedBy=multi-user.target
 SVCEOF
-
-    systemctl daemon-reload
-    systemctl enable sing-box
-    ok "sing-box systemd service 已安裝"
+        systemctl daemon-reload
+        systemctl enable sing-box
+        ok "sing-box systemd service 已安裝"
+    elif [ "$sm" = "openrc" ]; then
+        cat > /etc/init.d/sing-box << INITEOF
+#!/sbin/openrc-run
+name="sing-box proxy"
+description="sing-box proxy service"
+command="${SINGBOX_BIN_DIR}/sing-box"
+command_args="run -c ${SINGBOX_CONFIG} -C ${SINGBOX_DIR}/conf"
+command_background="yes"
+pidfile="/run/sing-box.pid"
+command_user="root"
+environment="ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true"
+INITEOF
+        chmod +x /etc/init.d/sing-box
+        rc-update add sing-box default 2>/dev/null || true
+        ok "sing-box OpenRC init 已安裝"
+    else
+        warn "無 service manager，sing-box 需手動啟動"
+    fi
 }
 
 # ---------- 生成默認 config.json ----------
@@ -436,7 +492,9 @@ do_full_deploy() {
     echo ""
 
     check_root
-    detect_systemd || { err "系統不支持 systemd，退出"; exit 1; }
+    local sm
+    sm=$(detect_service_manager) || { err "系統不支持 systemd / OpenRC，退出"; exit 1; }
+    info "Service manager: ${sm}"
     install_deps
     setup_kernel_params
 
@@ -478,12 +536,21 @@ do_full_deploy() {
     # 啟動
     echo ""
     info "啟動服務..."
-    systemctl restart sing-box || warn "sing-box 啟動失敗（請檢查 config.json）"
-    systemctl restart y-ui
+    if [ "$sm" = "openrc" ]; then
+        /etc/init.d/sing-box start || warn "sing-box 啟動失敗（請檢查 config.json）"
+        /etc/init.d/y-ui start
+    else
+        systemctl restart sing-box || warn "sing-box 啟動失敗（請檢查 config.json）"
+        systemctl restart y-ui
+    fi
 
     sleep 2
     local panel_status
-    panel_status=$(systemctl is-active y-ui 2>/dev/null || echo "inactive")
+    if [ "$sm" = "openrc" ]; then
+        panel_status=$(/sbin/rc-status y-ui 2>/dev/null | grep -q y-ui && echo "active" || echo "inactive")
+    else
+        panel_status=$(systemctl is-active y-ui 2>/dev/null || echo "inactive")
+    fi
     echo ""
 
     echo "============================================"
@@ -491,14 +558,14 @@ do_full_deploy() {
         echo -e "  ${GREEN}✅ 部署成功!${NC}"
     else
         echo -e "  ${YELLOW}⚠️  部署完成但 y-ui 可能未啟動${NC}"
-        echo "     請查看: systemctl status y-ui"
+        echo "     請查看: ${sm:=/etc/init.d/} y-ui status"
     fi
     echo ""
     local pub_ip
     pub_ip=$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null || echo "<本机IP>")
     echo "  面板地址: http://${pub_ip}:${PANEL_PORT}/"
     echo "  sing-box: ${SINGBOX_CONFIG}"
-    echo "  y-ui log:  journalctl -u y-ui -f"
+    echo "  Service:  ${sm}"
     echo "============================================"
 }
 
@@ -526,7 +593,9 @@ do_panel_deploy() {
     sb_ver=$(sing-box version 2>&1 | head -1 || echo "unknown")
     ok "檢測到 sing-box: ${sb_ver}"
 
-    detect_systemd || { err "系統不支持 systemd，退出"; exit 1; }
+    local sm
+    sm=$(detect_service_manager) || { err "系統不支持 systemd / OpenRC，退出"; exit 1; }
+    info "Service manager: ${sm}"
 
     echo ""
     read -rp "y-ui 面板端口 [19999]: " input
@@ -560,11 +629,19 @@ do_panel_deploy() {
 
     echo ""
     info "啟動 y-ui..."
-    systemctl restart y-ui
+    if [ "$sm" = "openrc" ]; then
+        /etc/init.d/y-ui start
+    else
+        systemctl restart y-ui
+    fi
 
     sleep 2
     local panel_status
-    panel_status=$(systemctl is-active y-ui 2>/dev/null || echo "inactive")
+    if [ "$sm" = "openrc" ]; then
+        panel_status=$(/sbin/rc-status y-ui 2>/dev/null | grep -q y-ui && echo "active" || echo "inactive")
+    else
+        panel_status=$(systemctl is-active y-ui 2>/dev/null || echo "inactive")
+    fi
     echo ""
 
     echo "============================================"
@@ -572,15 +649,14 @@ do_panel_deploy() {
         echo -e "  ${GREEN}✅ 部署成功!${NC}"
     else
         echo -e "  ${YELLOW}⚠️  y-ui 未啟動，請查看:${NC}"
-        echo "     systemctl status y-ui"
+        echo "     ${sm:=/etc/init.d/} y-ui status"
     fi
     echo ""
     local pub_ip
     pub_ip=$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null || echo "<本机IP>")
     echo "  面板地址: http://${pub_ip}:${PANEL_PORT}/"
     echo "  sing-box config: ${SINGBOX_CONFIG}"
-    echo "  y-ui log:        journalctl -u y-ui -f"
-    echo "  sudo -n systemctl restart sing-box  # 重啟 sing-box"
+    echo "  Service: ${sm}"
     echo "============================================"
 }
 
