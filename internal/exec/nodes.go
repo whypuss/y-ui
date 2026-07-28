@@ -525,6 +525,84 @@ func GenSSURLWithParams(host string, port int, method string) (string, CommandRe
 	return urlStr, CommandResult{Ok: true}
 }
 
+// GenAnyRealityURLWithParams 生成 AnyTLS-Reality URL（含 REALITY server/short_id）
+func GenAnyRealityURLWithParams(host string, port int) (string, CommandResult) {
+	inbounds, r := GetSingboxInbounds()
+	if !r.Ok {
+		return "", r
+	}
+	// 尋找 type=anytls 且 TLS 啟用 reality 的 inbound
+	var realityIB map[string]interface{}
+	for _, ib := range inbounds {
+		t, _ := ib["type"].(string)
+		if t != "anytls" {
+			continue
+		}
+		tls, ok := ib["tls"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		reality, rok := tls["reality"].(map[string]interface{})
+		if !rok {
+			continue
+		}
+		enabled, _ := reality["enabled"].(bool)
+		if !enabled {
+			continue
+		}
+		realityIB = ib
+		break
+	}
+	if realityIB == nil {
+		return "", CommandResult{Ok: false, Error: "no AnyTLS-Reality inbound found"}
+	}
+	password := ReadSingboxPassword(realityIB)
+	if password == "" {
+		password = newUUID()
+	}
+	port2 := 443
+	if p, ok := realityIB["listen_port"].(float64); ok && p > 0 {
+		port2 = int(p)
+	}
+	if port > 0 {
+		port2 = port
+	}
+	publicIP, err := getPublicIP()
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "cannot get public IP: " + err.Error()}
+	}
+	host2 := publicIP
+	if host != "" {
+		host2 = host
+	}
+	// 讀 REALITY 參數
+	serverName, shortID := "", ""
+	if tls, ok := realityIB["tls"].(map[string]interface{}); ok {
+		serverName, _ = tls["server_name"].(string)
+		if reality, ok := tls["reality"].(map[string]interface{}); ok {
+			if hs, ok := reality["handshake"].(map[string]interface{}); ok {
+				s, _ := hs["server"].(string)
+				if s != "" {
+					serverName = s
+				}
+			}
+			if sids, ok := reality["short_id"].([]interface{}); ok && len(sids) > 0 {
+				shortID, _ = sids[0].(string)
+			}
+		}
+	}
+	if serverName == "" {
+		return "", CommandResult{Ok: false, Error: "reality server_name not configured"}
+	}
+	// anytls://password@host:port/?server=SN&shortId=ID&insecure=1
+	values := url.Values{"insecure": {"1"}, "server": {serverName}}
+	if shortID != "" {
+		values["shortId"] = []string{shortID}
+	}
+	urlStr := fmt.Sprintf("anytls://%s@%s:%d/?%s#anyreality-%s", password, host2, port2, values.Encode(), host2)
+	return urlStr, CommandResult{Ok: true}
+}
+
 // randBase64 生成隨機 base64 字符串
 func randBase64(n int) string {
 	b := make([]byte, n)
@@ -561,6 +639,102 @@ func UpdateSSPassword() (string, CommandResult) {
 	}
 	return newPw, CommandResult{
 		Ok: true, Stdout: "SS password updated: " + newPw + "\n" + msg + "\n" + r2.Stdout, Stderr: r2.Stderr,
+	}
+}
+
+// UpdateAnyRealityPassword 更新 AnyTLS-Reality 密碼
+func UpdateAnyRealityPassword() (string, CommandResult) {
+	newPw := newUUID()
+	// 找 AnyTLS-Reality 配置文件（含 reality 的 anytls inbound）
+	var targetFile string
+	// 1. 主 config.json
+	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
+	if err == nil {
+		var c map[string]interface{}
+		if json.Unmarshal(cfgBytes, &c) == nil {
+			if raw, ok := c["inbounds"].([]interface{}); ok {
+			for _, v := range raw {
+				if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "anytls" {
+					if tls, ok := ii["tls"].(map[string]interface{}); ok {
+						if reality, ok := tls["reality"].(map[string]interface{}); ok {
+							if enabled, ok := reality["enabled"].(bool); ok && enabled {
+								targetFile = "/etc/sing-box/config.json"
+								break
+							}
+						}
+					}
+				}
+			}
+			}
+		}
+	}
+	// 2. conf/
+	if targetFile == "" {
+		entries, _ := filepath.Glob("/etc/sing-box/conf/*.json")
+		for _, fp := range entries {
+			dat, err := os.ReadFile(fp)
+			if err != nil {
+				continue
+			}
+			var fcfg map[string]interface{}
+			if json.Unmarshal(dat, &fcfg) != nil {
+				continue
+			}
+			if raw, ok := fcfg["inbounds"].([]interface{}); ok {
+			for _, v := range raw {
+				if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "anytls" {
+					if tls, ok := ii["tls"].(map[string]interface{}); ok {
+						if reality, ok := tls["reality"].(map[string]interface{}); ok {
+							if enabled, ok := reality["enabled"].(bool); ok && enabled {
+								targetFile = fp
+								break
+							}
+						}
+					}
+				}
+			}
+				if targetFile != "" {
+					break
+				}
+			}
+		}
+	}
+	if targetFile == "" {
+		return "", CommandResult{Ok: false, Error: "no AnyTLS-Reality config found"}
+	}
+	// 讀取目標文件，更新 password
+	dat, err := os.ReadFile(targetFile)
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "read " + targetFile + ": " + err.Error()}
+	}
+	var fcfg map[string]interface{}
+	if err := json.Unmarshal(dat, &fcfg); err != nil {
+		return "", CommandResult{Ok: false, Error: "parse " + targetFile + ": " + err.Error()}
+	}
+	if raw, ok := fcfg["inbounds"].([]interface{}); ok {
+		for i, v := range raw {
+			if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "anytls" {
+				users, _ := ii["users"].([]interface{})
+				for _, u := range users {
+					if ui, ok := u.(map[string]interface{}); ok {
+						ui["password"] = newPw
+					}
+				}
+				fcfg["inbounds"].([]interface{})[i] = ii
+			}
+		}
+	}
+	out, _ := json.MarshalIndent(fcfg, "", "  ")
+	if err := os.WriteFile(targetFile, out, 0644); err != nil {
+		return "", CommandResult{Ok: false, Error: "write " + targetFile + ": " + err.Error()}
+	}
+	msg := "updated " + targetFile
+	r := RestartSingbox(nil)
+	if !r.Ok {
+		return "", CommandResult{Ok: false, Error: "restart sing-box failed: " + r.Error}
+	}
+	return newPw, CommandResult{
+		Ok: true, Stdout: "AnyTLS-Reality password updated: " + newPw + "\n" + msg + "\n" + r.Stdout, Stderr: r.Stderr,
 	}
 }
 

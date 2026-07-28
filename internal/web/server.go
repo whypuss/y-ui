@@ -155,6 +155,14 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
 		}
 		return
+	case "nodes-anyreality-url":
+		urlStr, result := exec.GenAnyRealityURLWithParams(req.Host, req.Port)
+		if result.Ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "url": urlStr})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
+		}
+		return
 	case "nodes-hy2-url":
 		urlStr, result := exec.GenHY2URLWithParams(req.Host, req.Port)
 		if result.Ok {
@@ -192,6 +200,21 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 					pwMap["hy2"] = pw
 				case "shadowsocks":
 					pwMap["ss"] = pw
+				case "anytls":
+					// 檢查是否係 AnyTLS-Reality（有 reality）
+					if tls, ok := ib["tls"].(map[string]interface{}); ok {
+						if reality, ok := tls["reality"].(map[string]interface{}); ok {
+							if enabled, ok := reality["enabled"].(bool); ok && enabled {
+								pwMap["anyreality"] = pw
+								// AnyTLS 普通也同時返回
+								if _, exists := pwMap["anytls"]; !exists {
+									pwMap["anytls"] = pw
+								}
+								break
+							}
+						}
+					}
+					pwMap["anytls"] = pw
 				default:
 					pwMap[tstr] = pw
 				}
@@ -209,6 +232,14 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	case "nodes-update-hy2":
 		newPw, result := exec.UpdateHY2Password()
+		if result.Ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "password": newPw, "stdout": result.Stdout})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
+		}
+		return
+	case "nodes-update-anyreality":
+		newPw, result := exec.UpdateAnyRealityPassword()
 		if result.Ok {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "password": newPw, "stdout": result.Stdout})
 		} else {
@@ -347,6 +378,19 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 </div>
 
 <div class="card">
+<div class="card-title">🔴 AnyTLS+Reality</div>
+<div class="card-desc">anytls://password@IP:Port/?server=SN&amp;shortId=ID&amp;insecure=1</div>
+<table class="config-table">
+<tr><td>內部端口</td><td><input type="number" id="anyreality-port" class="input" placeholder="444"></td></tr>
+<tr><td>映射端口</td><td><input type="number" id="anyreality-mapped" class="input" placeholder="留空=內部端口"></td></tr>
+<tr><td>系統密碼</td><td><span id="anyreality-pwd" class="status-value">載入中...</span></td></tr>
+</table>
+<div class="btn-group"><button class="btn success" onclick="getAnyRealityNode()">獲取節點</button><button class="btn" onclick="updateAnyRealityPassword()">更新密碼</button><button class="btn" onclick="viewPassword('anyreality')">查看系統密碼</button></div>
+<div id="r-anyreality" class="result"></div>
+<div id="c-anyreality" class="copy-row" style="display:none"><div class="copy-box" id="anyreality-box"></div><button class="btn-copy" onclick="copyText(document.getElementById('anyreality-box').textContent)">📋 複製</button></div>
+</div>
+
+<div class="card">
 <div class="card-title">🚀 HY2 (Hysteria 2)</div>
 <div class="card-desc">hysteria2://password@IP:Port/?insecure=1</div>
 <table class="config-table">
@@ -412,8 +456,10 @@ async function updateAnyTLSUUID(){const b=event.target;b.disabled=true;try{const
 async function updateHY2Password(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-hy2');if(r.ok){show('r-hy2','✅ 密碼已更新\n'+r.stdout,true);b.disabled=false}else{show('r-hy2','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-hy2','ERROR: '+e.message,false);b.disabled=false}}
 async function updateSSPassword(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-ss');if(r.ok){show('r-ss','✅ 密碼已更新\\n'+r.stdout,true);b.disabled=false}else{show('r-ss','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-ss','ERROR: '+e.message,false);b.disabled=false}}
 async function viewAnyTLSPassword(){const d=await viewPassword('anytls')}
-async function viewPassword(type){const t={anytls:'anytls-pwd',hy2:'hy2-pwd',ss:'ss-pwd'};const rid={anytls:'r-anytls',hy2:'r-hy2',ss:'r-ss'};const label={anytls:'AnyTLS',hy2:'HY2',ss:'SS'};try{const d=await api('nodes-current-password');var pw=d.passwords&&d.passwords[type];if(pw){document.getElementById(t[type]).textContent=pw;show(rid[type],label[type]+' 系統密碼: '+pw,true)}else{show(rid[type],label[type]+' 未找到密碼',false)}}catch(e){show(rid[type],'ERROR: '+e.message,false)}}
-(function(){api('nodes-current-password').then(function(d){var pw=d.passwords;if(pw&&pw.anytls)document.getElementById('anytls-pwd').textContent=pw.anytls;if(pw&&pw.hy2)document.getElementById('hy2-pwd').textContent=pw.hy2;if(pw&&pw.ss)document.getElementById('ss-pwd').textContent=pw.ss}).catch(function(){})})()
+async function viewPassword(type){const t={anytls:'anytls-pwd',hy2:'hy2-pwd',ss:'ss-pwd',anyreality:'anyreality-pwd'};const rid={anytls:'r-anytls',hy2:'r-hy2',ss:'r-ss',anyreality:'r-anyreality'};const label={anytls:'AnyTLS',hy2:'HY2',ss:'SS',anyreality:'AnyTLS+Reality'};try{const d=await api('nodes-current-password');var pw=d.passwords&&d.passwords[type];if(pw){document.getElementById(t[type]).textContent=pw;show(rid[type],label[type]+' 系統密碼: '+pw,true)}else{show(rid[type],label[type]+' 未找到密碼',false)}}catch(e){show(rid[type],'ERROR: '+e.message,false)}}
+(function(){api('nodes-current-password').then(function(d){var pw=d.passwords;if(pw&&pw.anytls)document.getElementById('anytls-pwd').textContent=pw.anytls;if(pw&&pw.anyreality)document.getElementById('anyreality-pwd').textContent=pw.anyreality;if(pw&&pw.hy2)document.getElementById('hy2-pwd').textContent=pw.hy2;if(pw&&pw.ss)document.getElementById('ss-pwd').textContent=pw.ss}).catch(function(){})})()
+async function getAnyRealityNode(){var port=getPort('anyreality-port','anyreality-mapped');const u=await api('nodes-anyreality-url',{port:port});if(u.ok&&u.url){showNode('anyreality-box','c-anyreality','r-anyreality',u.url)}else{show('r-anyreality','FAIL: '+(u.error||''),false)}}
+async function updateAnyRealityPassword(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-anyreality');if(r.ok){show('r-anyreality','✅ 密碼已更新\n'+r.stdout,true);b.disabled=false}else{show('r-anyreality','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-anyreality','ERROR: '+e.message,false);b.disabled=false}}
 </script>
 </body>
 </html>`
