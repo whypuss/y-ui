@@ -154,14 +154,6 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
 		}
 		return
-	case "nodes-update-uuid":
-		newUUID, result := exec.UpdateAnyTLSUUID()
-		if result.Ok {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "uuid": newUUID, "stdout": result.Stdout})
-		} else {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
-		}
-		return
 	case "nodes-hy2-url":
 		urlStr, result := exec.GenHY2URLWithParams(req.Host, req.Port)
 		if result.Ok {
@@ -178,6 +170,30 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		urlStr, result := exec.GenSSURLWithParams(req.Host, req.Port, method)
 		if result.Ok {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "url": urlStr, "method": method})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
+		}
+		return
+	case "nodes-update-uuid":
+		newUUID, result := exec.UpdateAnyTLSUUID()
+		if result.Ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "uuid": newUUID, "stdout": result.Stdout})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
+		}
+		return
+	case "nodes-update-hy2":
+		newPw, result := exec.UpdateHY2Password()
+		if result.Ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "password": newPw, "stdout": result.Stdout})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
+		}
+		return
+	case "nodes-update-ss":
+		newPw, result := exec.UpdateSSPassword()
+		if result.Ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "password": newPw, "stdout": result.Stdout})
 		} else {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
 		}
@@ -296,7 +312,8 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 <div class="card-title">🌐 AnyTLS</div>
 <div class="card-desc">anytls://UUID@IP:Port/?insecure=1</div>
 <table class="config-table">
-<tr><td>端口</td><td><input type="number" id="anytls-port" class="input" placeholder="17777"></td></tr>
+<tr><td>內部端口</td><td><input type="number" id="anytls-port" class="input" placeholder="17777"></td></tr>
+<tr><td>映射端口</td><td><input type="number" id="anytls-mapped" class="input" placeholder="留空=內部端口"></td></tr>
 </table>
 <div class="btn-group"><button class="btn success" onclick="getAnyTLSNode()">獲取節點</button><button class="btn" onclick="updateAnyTLSUUID()">更新 UUID</button></div>
 <div id="r-anytls" class="result"></div>
@@ -307,9 +324,10 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 <div class="card-title">🚀 HY2 (Hysteria 2)</div>
 <div class="card-desc">hysteria2://password@IP:Port/?insecure=1</div>
 <table class="config-table">
-<tr><td>端口</td><td><input type="number" id="hy2-port" class="input" placeholder="22222"></td></tr>
+<tr><td>內部端口</td><td><input type="number" id="hy2-port" class="input" placeholder="20000"></td></tr>
+<tr><td>映射端口</td><td><input type="number" id="hy2-mapped" class="input" placeholder="留空=內部端口"></td></tr>
 </table>
-<div class="btn-group"><button class="btn success" onclick="getHY2Node()">獲取節點</button></div>
+<div class="btn-group"><button class="btn success" onclick="getHY2Node()">獲取節點</button><button class="btn" onclick="updateHY2Password()">更新密碼</button></div>
 <div id="r-hy2" class="result"></div>
 <div id="c-hy2" class="copy-row" style="display:none"><div class="copy-box" id="hy2-box"></div><button class="btn-copy" onclick="copyText(document.getElementById('hy2-box').textContent)">📋 複製</button></div>
 </div>
@@ -318,10 +336,11 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 <div class="card-title">🔗 SS (Shadowsocks)</div>
 <div class="card-desc">ss://base64(method:password@IP:Port)</div>
 <table class="config-table">
-<tr><td>端口</td><td><input type="number" id="ss-port" class="input" placeholder="33333"></td></tr>
+<tr><td>內部端口</td><td><input type="number" id="ss-port" class="input" placeholder="20001"></td></tr>
+<tr><td>映射端口</td><td><input type="number" id="ss-mapped" class="input" placeholder="留空=內部端口"></td></tr>
 <tr><td>加密</td><td><select id="ss-method" class="input"><option>aes-256-gcm</option><option>aes-128-gcm</option><option>chacha20-poly1305</option><option>chacha20-ietf-poly1305</option></select></td></tr>
 </table>
-<div class="btn-group"><button class="btn success" onclick="getSSNode()">獲取節點</button></div>
+<div class="btn-group"><button class="btn success" onclick="getSSNode()">獲取節點</button><button class="btn" onclick="updateSSPassword()">更新密碼</button></div>
 <div id="r-ss" class="result"></div>
 <div id="c-ss" class="copy-row" style="display:none"><div class="copy-box" id="ss-box"></div><button class="btn-copy" onclick="copyText(document.getElementById('ss-box').textContent)">📋 複製</button></div>
 </div>
@@ -334,7 +353,7 @@ function show(id,text,ok){const e=document.getElementById(id);e.textContent=text
 function copyText(t){try{var ta=document.createElement('textarea');ta.value=t;ta.style.cssText='position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0';document.body.appendChild(ta);ta.focus();ta.select();ta.setSelectionRange(0,t.length);document.execCommand('copy');document.body.removeChild(ta);alert('已複製到剪貼簿')}catch(e){alert('複製失敗')}}
 async function execAction(action,rid){const b=event.target;b.disabled=true;try{const d=await api(action);if(d.ok)show(rid,'OK\n'+(d.stdout||'')+(d.stderr?'\nstderr: '+d.stderr:''),true);else show(rid,'FAIL\n'+(d.error||'')+(d.stdout?'\n'+d.stdout:'')+(d.stderr?'\nstderr: '+d.stderr:''),false)}catch(e){show(rid,'ERROR: '+e.message,false)}b.disabled=false}
 async function refreshStatus(){try{const d=await api('status');const set=(id,k,f)=>{const e=document.getElementById(id);const v=d[k];e.textContent=f?f(v):(v?'active':'disabled');e.className='status-value '+(v?'on':'off')};set('sb','singbox_running',v=>v?'running '+d.singbox_info:'stopped');set('tun','tun_active');set('tp','tproxy_active');set('net','direct_net');document.getElementById('ts').textContent='updated '+new Date().toLocaleTimeString()}catch(e){document.getElementById('ts').textContent='error: '+e.message}}
-setInterval(refreshStatus,5000);refreshStatus();loadIptablesConfig();loadPublicIP()
+setInterval(refreshStatus,5000);refreshStatus();loadIptablesConfig();loadPublicIP();loadInboundPorts()
 function iptablesForm(){return{interface:document.getElementById('i-iface').value,tproxy_port:parseInt(document.getElementById('i-port').value)||10808,router_ip:document.getElementById('i-router').value,lan_subnet:document.getElementById('i-lan').value,tproxy_80:document.getElementById('i-tproxy80').checked,tproxy_443:document.getElementById('i-tproxy443').checked,dns_forward:document.getElementById('i-dns').checked,masquerade:document.getElementById('i-masq').checked,forward:document.getElementById('i-fwd').checked,exclude_self:document.getElementById('i-excl').checked}}
 async function iptablesSave(){const c=iptablesForm();const r=await api('iptables-save',{iptables:c});show('r-iptables',(r.ok?'SAVED\n':'FAIL\n')+(r.stdout||r.error||''),r.ok)}
 async function iptablesApply(){const r=await api('iptables-apply');show('r-iptables',(r.ok?'APPLIED\n':'FAIL\n')+(r.stdout||'')+(r.stderr?'stderr: '+r.stderr:''),r.ok);refreshStatus()}
@@ -342,11 +361,15 @@ async function iptablesClear(){const r=await api('iptables-clear');show('r-iptab
 async function iptablesRules(){const r=await api('iptables-rules');show('r-iptables','RULES:\n'+(r.stdout||'')+(r.stderr?'stderr: '+r.stderr:''),r.ok)}
 async function loadIptablesConfig(){try{const r=await api('iptables-get');if(r.interface==='enp4s0f0'&&r.tproxy_port===10808&&r.router_ip==='192.168.31.1')return;document.getElementById('i-iface').value=r.interface||'';document.getElementById('i-port').value=r.tproxy_port||'';document.getElementById('i-router').value=r.router_ip||'';document.getElementById('i-lan').value=r.lan_subnet||'';document.getElementById('i-tproxy80').checked=r.tproxy_80||false;document.getElementById('i-tproxy443').checked=r.tproxy_443||false;document.getElementById('i-dns').checked=r.dns_forward||false;document.getElementById('i-masq').checked=r.masquerade||false;document.getElementById('i-fwd').checked=r.forward||false;document.getElementById('i-excl').checked=r.exclude_self||false}catch(e){}}
 async function loadPublicIP(){api('nodes-public-ip').then(function(d){if(d.ok)document.getElementById('pubip').textContent=d.ip;else document.getElementById('pubip').textContent='載入失敗'}).catch(function(){document.getElementById('pubip').textContent='載入失敗'})}
+async function loadInboundPorts(){try{const r=await api('nodes-inbound');if(r.listeners&&r.listeners.length>0){r.listeners.forEach(function(x){var t=(x.tag||'').toLowerCase();if(t.indexOf('anytls')>=0)document.getElementById('anytls-port').value=x.port;else if(t.indexOf('hysteria2')>=0||t.indexOf('hy2')>=0)document.getElementById('hy2-port').value=x.port;else if(t.indexOf('shadowsocks')>=0||t.indexOf('ss-')>=0)document.getElementById('ss-port').value=x.port})}}catch(e){}}
 function showNode(boxId,copyId,resultId,url){document.getElementById(boxId).textContent=url;document.getElementById(copyId).style.display='flex';show(resultId,'✅ 已生成',true)}
-async function getAnyTLSNode(){var port=document.getElementById('anytls-port').value;const u=await api('nodes-url',{port:parseInt(port)||0});if(u.ok&&u.url){showNode('anytls-box','c-anytls','r-anytls',u.url)}else{show('r-anytls','FAIL: '+(u.error||''),false)}}
-async function getHY2Node(){var port=document.getElementById('hy2-port').value;const u=await api('nodes-hy2-url',{port:parseInt(port)||0});if(u.ok&&u.url){showNode('hy2-box','c-hy2','r-hy2',u.url)}else{show('r-hy2','FAIL: '+(u.error||''),false)}}
-async function getSSNode(){var port=document.getElementById('ss-port').value;var method=document.getElementById('ss-method').value;const u=await api('nodes-ss-url',{port:parseInt(port)||0,method:method});if(u.ok&&u.url){showNode('ss-box','c-ss','r-ss',u.url)}else{show('r-ss','FAIL: '+(u.error||''),false)}}
+function getPort(insideId,mappedId){var m=document.getElementById(mappedId).value;return parseInt(m)||parseInt(document.getElementById(insideId).value)||0}
+async function getAnyTLSNode(){var port=getPort('anytls-port','anytls-mapped');const u=await api('nodes-url',{port:port});if(u.ok&&u.url){showNode('anytls-box','c-anytls','r-anytls',u.url)}else{show('r-anytls','FAIL: '+(u.error||''),false)}}
+async function getHY2Node(){var port=getPort('hy2-port','hy2-mapped');const u=await api('nodes-hy2-url',{port:port});if(u.ok&&u.url){showNode('hy2-box','c-hy2','r-hy2',u.url)}else{show('r-hy2','FAIL: '+(u.error||''),false)}}
+async function getSSNode(){var port=getPort('ss-port','ss-mapped');var method=document.getElementById('ss-method').value;const u=await api('nodes-ss-url',{port:port,method:method});if(u.ok&&u.url){showNode('ss-box','c-ss','r-ss',u.url)}else{show('r-ss','FAIL: '+(u.error||''),false)}}
 async function updateAnyTLSUUID(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-uuid');if(r.ok){show('r-anytls','✅ UUID 已更新\n'+r.stdout,true);b.disabled=false}else{show('r-anytls','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-anytls','ERROR: '+e.message,false);b.disabled=false}}
+async function updateHY2Password(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-hy2');if(r.ok){show('r-hy2','✅ 密碼已更新\n'+r.stdout,true);b.disabled=false}else{show('r-hy2','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-hy2','ERROR: '+e.message,false);b.disabled=false}}
+async function updateSSPassword(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-ss');if(r.ok){show('r-ss','✅ 密碼已更新\n'+r.stdout,true);b.disabled=false}else{show('r-ss','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-ss','ERROR: '+e.message,false);b.disabled=false}}
 
 </script>
 </body>

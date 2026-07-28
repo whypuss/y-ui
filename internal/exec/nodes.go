@@ -53,11 +53,13 @@ func GetInboundListeners() ([]InboundListener, CommandResult) {
 		return nil, CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
 	}
 
-	// 讀 ss -tlnp 獲取真實監聽端口
+	// 讀 ss -tlnp + ss -ulnp 獲取真實監聽端口（TCP + UDP）
 	ssOut, err := exec.Command("sudo", "-n", "ss", "-tlnp").Output()
 	if err != nil {
 		ssOut, _ = exec.Command("sudo", "-S", "ss", "-tlnp").Output()
 	}
+	ssOutUdp, _ := exec.Command("sudo", "-n", "ss", "-ulnp").Output()
+	ssOut = append(ssOut, ssOutUdp...)
 	ssLines := strings.Split(string(ssOut), "\n")
 
 	listeners := []InboundListener{}
@@ -333,10 +335,14 @@ func GenHY2URLWithParams(host string, port int) (string, CommandResult) {
 	}
 	var password string
 	if hy2 != nil {
-		// password 通常直接係 string 或喺 users[]
+		// hysteria2 密碼可能喺頂層 password 或 users[].password
 		pw, ok := hy2["password"].(string)
 		if ok && pw != "" {
 			password = pw
+		} else if users, ok := hy2["users"].([]interface{}); ok && len(users) > 0 {
+			if u, ok := users[0].(map[string]interface{}); ok {
+				password, _ = u["password"].(string)
+			}
 		}
 	}
 	if password == "" {
@@ -435,6 +441,95 @@ func randBase64(n int) string {
 	b := make([]byte, n)
 	rand.Read(b)
 	return base64.RawStdEncoding.EncodeToString(b)
+}
+
+// updateHY2Password 生成新密碼 → 寫入 config.json hysteria2 users[].password → 重啟
+func UpdateHY2Password() (string, CommandResult) {
+	newPw := newUUID()
+	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "read config.json: " + err.Error()}
+	}
+	var c map[string]interface{}
+	if err := json.Unmarshal(cfgBytes, &c); err != nil {
+		return "", CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
+	}
+	found := false
+	for i, v := range c["inbounds"].([]interface{}) {
+		if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "hysteria2" {
+			users, _ := ii["users"].([]interface{})
+			for _, u := range users {
+				if ui, ok := u.(map[string]interface{}); ok {
+					ui["password"] = newPw
+					found = true
+				}
+			}
+			c["inbounds"].([]interface{})[i] = ii
+			break
+		}
+	}
+	if !found {
+		return "", CommandResult{Ok: false, Error: "no hysteria2 inbound found"}
+	}
+	out, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "marshal config: " + err.Error()}
+	}
+	err = os.WriteFile("/etc/sing-box/config.json", out, 0644)
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "write config.json: " + err.Error()}
+	}
+	r := RestartSingbox(nil)
+	if !r.Ok {
+		return "", CommandResult{Ok: false, Error: "restart sing-box failed: " + r.Error}
+	}
+	return newPw, CommandResult{
+		Ok:     true,
+		Stdout: "HY2 password updated: " + newPw + "\n" + r.Stdout,
+		Stderr: r.Stderr,
+	}
+}
+
+// updateSSPassword 生成新密碼 → 寫入 config.json shadowsocks password → 重啟
+func UpdateSSPassword() (string, CommandResult) {
+	newPw := randBase64(32)
+	cfgBytes, err := exec.Command("cat", "/etc/sing-box/config.json").Output()
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "read config.json: " + err.Error()}
+	}
+	var c map[string]interface{}
+	if err := json.Unmarshal(cfgBytes, &c); err != nil {
+		return "", CommandResult{Ok: false, Error: "parse config.json: " + err.Error()}
+	}
+	found := false
+	for i, v := range c["inbounds"].([]interface{}) {
+		if ii, ok := v.(map[string]interface{}); ok && ii["type"] == "shadowsocks" {
+			ii["password"] = newPw
+			c["inbounds"].([]interface{})[i] = ii
+			found = true
+			break
+		}
+	}
+	if !found {
+		return "", CommandResult{Ok: false, Error: "no shadowsocks inbound found"}
+	}
+	out, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "marshal config: " + err.Error()}
+	}
+	err = os.WriteFile("/etc/sing-box/config.json", out, 0644)
+	if err != nil {
+		return "", CommandResult{Ok: false, Error: "write config.json: " + err.Error()}
+	}
+	r := RestartSingbox(nil)
+	if !r.Ok {
+		return "", CommandResult{Ok: false, Error: "restart sing-box failed: " + r.Error}
+	}
+	return newPw, CommandResult{
+		Ok:     true,
+		Stdout: "SS password updated: " + newPw + "\n" + r.Stdout,
+		Stderr: r.Stderr,
+	}
 }
 
 // UpdateAnyTLSUUID 生成新 UUID → 寫入 config.json → 重啟 sing-box
