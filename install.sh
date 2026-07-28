@@ -178,8 +178,47 @@ install_yui() {
         info "從 GitHub Release 下載 y-ui (${arch})..."
         curl -fsSL -o /tmp/y-ui "$release_bin"
         ok "自動下載完成"
+    elif [ -f /tmp/y-ui ]; then
+        ok "/tmp/y-ui 已存在，使用手動提供的 binary"
+    elif [ "$QUIET" = "1" ]; then
+        # 非互動模式: 自動從源編譯
+        info "自動從源編譯 y-ui (${arch})..."
+        if ! command -v git >/dev/null 2>&1; then
+            info "安裝 git..."
+            if command -v apk >/dev/null 2>&1; then
+                apk add -q git 2>/dev/null || true
+            elif command -v apt-get >/dev/null 2>&1; then
+                apt-get install -y -qq git 2>/dev/null || true
+            elif command -v yum >/dev/null 2>&1; then
+                yum install -y git 2>/dev/null || true
+            fi
+        fi
+        if ! command -v go >/dev/null 2>&1; then
+            info "安裝 Go..."
+            if command -v apk >/dev/null 2>&1; then
+                apk add -q go 2>/dev/null || true
+            elif command -v apt-get >/dev/null 2>&1; then
+                apt-get install -y -qq golang-go 2>/dev/null || {
+                    curl -fsSL "https://go.dev/dl/go1.22.0.linux-${arch}.tar.gz" | tar -C /usr/local -xzf -
+                    export PATH=/usr/local/go/bin:$PATH
+                }
+            elif command -v yum >/dev/null 2>&1; then
+                yum install -y golang 2>/dev/null || true
+            fi
+            export PATH=/usr/local/go/bin:$PATH
+        fi
+        rm -rf /tmp/y-ui-src
+        git clone --depth=1 "https://github.com/${GITHUB_REPO}.git" /tmp/y-ui-src
+        cd /tmp/y-ui-src
+        GOOS=linux GOARCH="${arch}" go build -trimpath -o /tmp/y-ui ./cmd
+        if [ ! -f /tmp/y-ui ]; then
+            err "編譯失敗，請手動上傳 /tmp/y-ui 後重試"
+            exit 1
+        fi
+        rm -rf /tmp/y-ui-src
+        ok "編譯完成"
     else
-        # 2. 自動下載失敗 — 互動式處理
+        # 互動模式: 給用戶選項
         echo ""
         echo -e "  ${YELLOW}GitHub Release 中未找到 linux-${arch} 的 y-ui binary${NC}"
         echo "  請選擇一種方式獲取:"
@@ -205,7 +244,7 @@ install_yui() {
                 fi
                 ok "使用手動提供的 /tmp/y-ui"
                 ;;
-            2)
+            2|*)
                 if ! command -v go >/dev/null 2>&1; then
                     info "安裝 Go..."
                     if command -v apt-get >/dev/null 2>&1; then
@@ -230,15 +269,6 @@ install_yui() {
                 fi
                 rm -rf /tmp/y-ui-src
                 ok "編譯完成"
-                ;;
-            3|*)
-                warn "請先手動上傳 y-ui 到 /tmp/y-ui"
-                read -rp "上傳完成後按 Enter 繼續..."
-                if [ ! -f /tmp/y-ui ]; then
-                    err "/tmp/y-ui 不存在，退出"
-                    exit 1
-                fi
-                ok "使用手動提供的 /tmp/y-ui"
                 ;;
         esac
     fi
