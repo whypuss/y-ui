@@ -268,6 +268,64 @@ func findInbound(inbounds []map[string]interface{}, typ string) (map[string]inte
 	return nil, false
 }
 
+// AnyRealityConfig AnyTLS+Reality 配置摘要
+type AnyRealityConfig struct {
+	PrivateKey  string `json:"private_key"`
+	PublicKey   string `json:"public_key"`
+	ServerName  string `json:"server_name"`
+	ShortID     string `json:"short_id"`
+	HandshakeS  string `json:"handshake_server"`
+}
+
+// GetAnyRealityConfig 讀 AnyTLS-Reality inbound 的 REALITY 參數
+func GetAnyRealityConfig() (AnyRealityConfig, CommandResult) {
+	inbounds, r := GetSingboxInbounds()
+	if !r.Ok {
+		return AnyRealityConfig{}, r
+	}
+	var cfg AnyRealityConfig
+	for _, ib := range inbounds {
+		if t, ok := ib["type"]; ok && t == "anytls" {
+			tls, ok := ib["tls"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			sni, _ := tls["server_name"].(string)
+			reality, ok := tls["reality"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			enabled, _ := reality["enabled"].(bool)
+			if !enabled {
+				continue
+			}
+			pk, _ := reality["private_key"].(string)
+			cfg.ServerName = sni
+			cfg.PrivateKey = pk
+			// 計算 public_key（X25519）
+			cfg.PublicKey = x25519PublicKey(pk)
+			if hs, ok := reality["handshake"].(map[string]interface{}); ok {
+				cfg.HandshakeS, _ = hs["server"].(string)
+			}
+			if sids, ok := reality["short_id"].([]interface{}); ok && len(sids) > 0 {
+				cfg.ShortID, _ = sids[0].(string)
+			}
+			break
+		}
+	}
+	if cfg.PrivateKey == "" {
+		return AnyRealityConfig{}, CommandResult{Ok: false, Error: "no AnyTLS-Reality inbound found"}
+	}
+	return cfg, CommandResult{Ok: true}
+}
+
+// x25519PublicKey REALITY public_key 需從 private_key 計算（X25519 scalar mult）
+// NEKOBOX 客戶端唔需要 public_key，只須 server_name 驗證身份
+// 留空，節點頁顯示「需計算」提示
+func x25519PublicKey(privateKey string) string {
+	return ""
+}
+
 // readSingboxPassword 從 users[] 讀 password（兼容頂層 password + users 結構）
 func ReadSingboxPassword(ib map[string]interface{}) string {
 	if pw, ok := ib["password"].(string); ok && pw != "" {
@@ -526,7 +584,7 @@ func GenSSURLWithParams(host string, port int, method string) (string, CommandRe
 }
 
 // GenAnyRealityURLWithParams 生成 AnyTLS-Reality URL（含 REALITY server/short_id）
-func GenAnyRealityURLWithParams(host string, port int) (string, CommandResult) {
+func GenAnyRealityURLWithParams(host string, port int, serverNameOverride string, shortIDOverride string) (string, CommandResult) {
 	inbounds, r := GetSingboxInbounds()
 	if !r.Ok {
 		return "", r
@@ -575,7 +633,7 @@ func GenAnyRealityURLWithParams(host string, port int) (string, CommandResult) {
 	if host != "" {
 		host2 = host
 	}
-	// 讀 REALITY 參數
+	// 讀 REALITY 參數（config 預設，用戶輸入可覆蓋）
 	serverName, shortID := "", ""
 	if tls, ok := realityIB["tls"].(map[string]interface{}); ok {
 		serverName, _ = tls["server_name"].(string)
@@ -590,6 +648,13 @@ func GenAnyRealityURLWithParams(host string, port int) (string, CommandResult) {
 				shortID, _ = sids[0].(string)
 			}
 		}
+	}
+	// 用戶輸入覆蓋
+	if serverNameOverride != "" {
+		serverName = serverNameOverride
+	}
+	if shortIDOverride != "" {
+		shortID = shortIDOverride
 	}
 	if serverName == "" {
 		return "", CommandResult{Ok: false, Error: "reality server_name not configured"}
