@@ -265,19 +265,26 @@ func RestartSingbox(ctx context.Context) CommandResult {
 
 	restart := runCommandWithSudo([]string{"sh", "-c", `
 echo "checking service manager..."
+# 強制 kill 舊進程，避免舊配置殘留
+pkill -9 -f "sing-box run -c" || true
+sleep 2
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     echo "using systemd"
     systemctl restart sing-box-main.service
     sleep 3
 elif command -v rc-service >/dev/null 2>&1; then
     echo "using OpenRC"
-    /etc/init.d/sing-box restart
-    sleep 3
+    /etc/init.d/sing-box start 2>&1 || true
+    # OpenRC init 啟動唔到就 fallback 直接啟動
+    sleep 2
+    if ! pgrep -f "sing-box run -c" >/dev/null 2>&1; then
+      echo "fallback: direct start"
+      nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json > /var/log/sing-box.log 2>&1 &
+      sleep 3
+    fi
 else
     echo "using direct start"
-    pkill -9 -f "sing-box run -c /etc/sing-box/config.json"
-    sleep 2
-    nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 &
+    nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json > /var/log/sing-box.log 2>&1 &
     sleep 3
 fi
 ps -eo pid,lstart,args 2>/dev/null | grep "sing-box run -c" | grep -v grep || true
