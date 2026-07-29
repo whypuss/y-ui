@@ -156,11 +156,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		urlStr, urlResult := exec.GenAnyTLSURLWithParams(req.Host, req.Port)
-		if urlResult.Ok {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "url": urlStr})
-		} else {
+		if !urlResult.Ok {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": urlResult.Error})
+			return
 		}
+		r := exec.RestartSingbox(nil)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok": true, "url": urlStr,
+			"restart": map[string]interface{}{"ok": r.Ok, "stdout": r.Stdout, "error": r.Error},
+		})
 		return
 	case "nodes-hy2-url":
 		result := exec.SaveInboundPort("hysteria2", req.Port)
@@ -169,11 +173,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		urlStr, urlResult := exec.GenHY2URLWithParams(req.Host, req.Port)
-		if urlResult.Ok {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "url": urlStr})
-		} else {
+		if !urlResult.Ok {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": urlResult.Error})
+			return
 		}
+		r := exec.RestartSingbox(nil)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok": true, "url": urlStr,
+			"restart": map[string]interface{}{"ok": r.Ok, "stdout": r.Stdout, "error": r.Error},
+		})
 		return
 	case "nodes-ss-url":
 		method := strings.ToLower(req.Method)
@@ -186,11 +194,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		urlStr, urlResult := exec.GenSSURLWithParams(req.Host, req.Port, method)
-		if urlResult.Ok {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "url": urlStr, "method": method})
-		} else {
+		if !urlResult.Ok {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": urlResult.Error})
+			return
 		}
+		r := exec.RestartSingbox(nil)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok": true, "url": urlStr, "method": method,
+			"restart": map[string]interface{}{"ok": r.Ok, "stdout": r.Stdout, "stderr": r.Stderr, "error": r.Error},
+		})
 		return
 	case "nodes-current-password":
 		inbounds, cr := exec.GetSingboxInbounds()
