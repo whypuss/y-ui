@@ -743,6 +743,56 @@ func UpdateSSPassword() (string, CommandResult) {
 	}
 }
 
+// UpdateInboundPort 修改指定類型 inbound 嘅 listen_port → 重啟
+func UpdateInboundPort(typ string, newPort int) CommandResult {
+	if newPort < 1 || newPort > 65535 {
+		return CommandResult{Ok: false, Error: "invalid port: " + fmt.Sprintf("%d", newPort)}
+	}
+	cfgPath := "/etc/sing-box/config.json"
+	cfgBytes, err := exec.Command("cat", cfgPath).Output()
+	if err != nil {
+		return CommandResult{Ok: false, Error: "cannot read config.json: " + err.Error()}
+	}
+	var c map[string]interface{}
+	if err := json.Unmarshal(cfgBytes, &c); err != nil {
+		return CommandResult{Ok: false, Error: "invalid config.json"}
+	}
+	ibs, ok := c["inbounds"].([]interface{})
+	if !ok {
+		return CommandResult{Ok: false, Error: "no inbounds in config"}
+	}
+	for _, v := range ibs {
+		ib, ibok := v.(map[string]interface{})
+		if !ibok {
+			continue
+		}
+		if t, ok := ib["type"].(string); ok && t == typ {
+			ib["listen_port"] = newPort
+			// 更新 tag（e.g. SS-20001 -> SS-8443）
+			if oldTag, ok := ib["tag"].(string); ok {
+				// 取 dash 前部分 + 新端口
+				for i := len(oldTag) - 1; i >= 0; i-- {
+					if oldTag[i] == '-' {
+						ib["tag"] = oldTag[:i] + "-" + fmt.Sprintf("%d", newPort)
+						break
+					}
+				}
+			}
+			dat, _ := json.MarshalIndent(c, "", "  ")
+			if err := os.WriteFile(cfgPath, dat, 0644); err != nil {
+				return CommandResult{Ok: false, Error: "write config failed: " + err.Error()}
+			}
+			msg := fmt.Sprintf("%s port updated: %d -> %d", typ, ib["listen_port"], newPort)
+			r := RestartSingbox(nil)
+			if !r.Ok {
+				return CommandResult{Ok: false, Error: "restart failed: " + r.Error}
+			}
+			return CommandResult{Ok: true, Stdout: msg + "\n" + r.Stdout}
+		}
+	}
+	return CommandResult{Ok: false, Error: "no inbound of type " + typ + " found"}
+}
+
 // UpdateAnyRealityPassword 更新 AnyTLS-Reality 密碼
 func UpdateAnyRealityPassword() (string, CommandResult) {
 	newPw := newUUID()
