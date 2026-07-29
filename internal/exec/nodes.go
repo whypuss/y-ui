@@ -736,9 +736,14 @@ func UpdateSSPassword() (string, CommandResult) {
 }
 
 // SaveInboundPort 修改指定類型 inbound 嘅 listen_port（只寫文件，唔重啟）
+// [TUN-RULE] 絕對唔得刪除/覆蓋 tun inbound
 func SaveInboundPort(typ string, newPort int) CommandResult {
 	if newPort < 1 || newPort > 65535 {
 		return CommandResult{Ok: false, Error: "invalid port: " + fmt.Sprintf("%d", newPort)}
+	}
+	// 不允許修改 tun 端口（tun 無 listen_port，防止誤刪）
+	if typ == "tun" {
+		return CommandResult{Ok: false, Error: "refusing to modify tun inbound [TUN-RULE]"}
 	}
 	cfgPath := "/etc/sing-box/config.json"
 	cfgBytes, err := exec.Command("cat", cfgPath).Output()
@@ -752,6 +757,13 @@ func SaveInboundPort(typ string, newPort int) CommandResult {
 	ibs, ok := c["inbounds"].([]interface{})
 	if !ok {
 		return CommandResult{Ok: false, Error: "no inbounds in config"}
+	}
+	// [TUN-RULE] 寫入前記錄 tun inbound 數量
+	tunCountBefore := 0
+	for _, v := range ibs {
+		if m, mOk := v.(map[string]interface{}); mOk && m["type"] == "tun" {
+			tunCountBefore++
+		}
 	}
 	for _, v := range ibs {
 		ib, ibok := v.(map[string]interface{})
@@ -771,6 +783,21 @@ func SaveInboundPort(typ string, newPort int) CommandResult {
 			dat, _ := json.MarshalIndent(c, "", "  ")
 			if err := os.WriteFile(cfgPath, dat, 0644); err != nil {
 				return CommandResult{Ok: false, Error: "write config failed: " + err.Error()}
+			}
+			// [TUN-RULE] 寫入後驗證 tun 未被刪除
+			var cAfter map[string]interface{}
+			if err := json.Unmarshal(dat, &cAfter); err == nil {
+				if ibs2, ok2 := cAfter["inbounds"].([]interface{}); ok2 {
+					tunCountAfter := 0
+					for _, v2 := range ibs2 {
+						if m2, mOk2 := v2.(map[string]interface{}); mOk2 && m2["type"] == "tun" {
+							tunCountAfter++
+						}
+					}
+					if tunCountAfter != tunCountBefore {
+						return CommandResult{Ok: false, Error: "TUN-RULE VIOLATION: tun count changed " + fmt.Sprintf("%d→%d", tunCountBefore, tunCountAfter)}
+					}
+				}
 			}
 			return CommandResult{Ok: true, Stdout: typ + " port saved: " + fmt.Sprintf("%d", newPort)}
 		}
