@@ -184,24 +184,35 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		pwMap := map[string]string{}
+		portMap := map[string]int{}
 		for _, ib := range inbounds {
 			if t, ok := ib["type"]; ok {
 				tstr := t.(string)
 				pw := exec.ReadSingboxPassword(ib)
-				// 映射為前端友好的鍵名
+				port, _ := ib["listen_port"].(int)
+				if port == 0 {
+					if fp, ok := ib["listen_port"].(float64); ok {
+						port = int(fp)
+					}
+				}
 				switch tstr {
 				case "hysteria2":
 					pwMap["hy2"] = pw
+					portMap["hy2"] = port
 				case "shadowsocks":
 					pwMap["ss"] = pw
+					portMap["ss"] = port
 				case "anytls":
 					pwMap["anytls"] = pw
+					portMap["anytls"] = port
 				default:
 					pwMap[tstr] = pw
 				}
 			}
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "passwords": pwMap})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok": true, "passwords": pwMap, "ports": portMap,
+		})
 		return
 	case "nodes-update-uuid":
 		newUUID, result := exec.UpdateAnyTLSUUID()
@@ -417,7 +428,7 @@ async function updateHY2Password(){const b=event.target;b.disabled=true;try{cons
 async function updateSSPassword(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-ss');if(r.ok){show('r-ss','✅ 密碼已更新\\n'+r.stdout,true);b.disabled=false}else{show('r-ss','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-ss','ERROR: '+e.message,false);b.disabled=false}}
 async function viewAnyTLSPassword(){const d=await viewPassword('anytls')}
 async function viewPassword(type){const t={anytls:'anytls-pwd',hy2:'hy2-pwd',ss:'ss-pwd'};const rid={anytls:'r-anytls',hy2:'r-hy2',ss:'r-ss'};const label={anytls:'AnyTLS',hy2:'HY2',ss:'SS'};try{const d=await api('nodes-current-password');var pw=d.passwords&&d.passwords[type];if(pw){document.getElementById(t[type]).textContent=pw;show(rid[type],label[type]+' 系統密碼: '+pw,true)}else{show(rid[type],label[type]+' 未找到密碼',false)}}catch(e){show(rid[type],'ERROR: '+e.message,false)}}
-(function(){api('nodes-current-password').then(function(d){var pw=d.passwords;if(pw&&pw.anytls)document.getElementById('anytls-pwd').textContent=pw.anytls;if(pw&&pw.hy2)document.getElementById('hy2-pwd').textContent=pw.hy2;if(pw&&pw.ss)document.getElementById('ss-pwd').textContent=pw.ss}).catch(function(){})})()
+(function(){api('nodes-current-password').then(function(d){var pw=d.passwords;var ports=d.ports;if(pw&&pw.anytls)document.getElementById('anytls-pwd').textContent=pw.anytls;if(pw&&pw.hy2)document.getElementById('hy2-pwd').textContent=pw.hy2;if(pw&&pw.ss)document.getElementById('ss-pwd').textContent=pw.ss;if(ports&&ports.anytls)document.getElementById('anytls-port').value=ports.anytls;if(ports&&ports.hy2)document.getElementById('hy2-port').value=ports.hy2;if(ports&&ports.ss)document.getElementById('ss-port').value=ports.ss}).catch(function(){})})()
 </script>
 </body>
 </html>`
