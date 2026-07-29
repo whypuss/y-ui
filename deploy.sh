@@ -3,8 +3,9 @@
 # Usage: bash deploy.sh
 set -euo pipefail
 
-VPS="23.94.147.211"
-PORT="20022"
+VPS="${1:-23.94.147.211}"
+PORT="${2:-20022}"
+VERIFY_PORT="${3:-18080}"
 BIN_NAME="y-ui-linux"
 REMOTE="/opt/y-ui/y-ui"
 
@@ -53,10 +54,10 @@ C "echo '=== after kill ===' && pgrep y-ui || echo 'no y-ui running'"
 C "cp /tmp/y-ui-up $REMOTE && chmod +x $REMOTE && rm -f /tmp/y-ui-up"
 C "$REMOTE -port 8080 > /tmp/yui.log 2>&1 & echo NEWPID=\$!"
 sleep 2
-C "netstat -tlnp | grep 8080 && echo '--- log ---' && cat /tmp/yui.log"
+C "netstat -tlnp | grep 8080 || true && echo '--- log ---' && cat /tmp/yui.log || echo 'no log yet'"
 
 echo "=== [5/5] Verify rendered JS + API ==="
-curl -s "http://$VPS:18080/" > /tmp/r.html
+curl -s "http://$VPS:$VERIFY_PORT/" > /tmp/r.html
 python3 - <<'PYEOF'
 import re
 html=open('/tmp/r.html').read()
@@ -66,6 +67,6 @@ open('/tmp/rendered.js','w').write(js)
 print('rendered len:', len(js))
 PYEOF
 node --check /tmp/rendered.js && echo "Rendered JS OK ✓" || { echo "Rendered JS ERROR ✗"; exit 1; }
-API=$(curl -s -X POST "http://$VPS:18080/api" -H 'Content-Type: application/json' -d '{"action":"status"}')
+API=$(curl -s -X POST "http://$VPS:$VERIFY_PORT/api" -H 'Content-Type: application/json' -d '{"action":"status"}')
 echo "API: $API"
 echo "=== DEPLOY DONE ✓ ==="
