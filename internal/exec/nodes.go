@@ -711,40 +711,32 @@ func randBase64(n int) string {
 	return base64.RawStdEncoding.EncodeToString(b)
 }
 
-// updateHY2Password 生成新密碼 → 寫入配置 → 重啟
+// updateHY2Password 生成新密碼 → 寫入配置
 func UpdateHY2Password() (string, CommandResult) {
 	newPw := newUUID()
 	msg, r := updateInboundPassword("hysteria2", newPw)
 	if !r.Ok {
 		return "", r
 	}
-	r2 := RestartSingbox(nil)
-	if !r2.Ok {
-		return "", CommandResult{Ok: false, Error: "restart sing-box failed: " + r2.Error}
-	}
 	return newPw, CommandResult{
-		Ok: true, Stdout: "HY2 password updated: " + newPw + "\n" + msg + "\n" + r2.Stdout, Stderr: r2.Stderr,
+		Ok: true, Stdout: "HY2 password updated: " + newPw + "\n" + msg, Stderr: r.Stderr,
 	}
 }
 
-// updateSSPassword 生成新密碼 → 寫入配置 → 重啟
+// updateSSPassword 生成新密碼 → 寫入配置
 func UpdateSSPassword() (string, CommandResult) {
 	newPw := randBase64(32)
 	msg, r := updateInboundPassword("shadowsocks", newPw)
 	if !r.Ok {
 		return "", r
 	}
-	r2 := RestartSingbox(nil)
-	if !r2.Ok {
-		return "", CommandResult{Ok: false, Error: "restart sing-box failed: " + r2.Error}
-	}
 	return newPw, CommandResult{
-		Ok: true, Stdout: "SS password updated: " + newPw + "\n" + msg + "\n" + r2.Stdout, Stderr: r2.Stderr,
+		Ok: true, Stdout: "SS password updated: " + newPw + "\n" + msg, Stderr: r.Stderr,
 	}
 }
 
-// UpdateInboundPort 修改指定類型 inbound 嘅 listen_port → 重啟
-func UpdateInboundPort(typ string, newPort int) CommandResult {
+// SaveInboundPort 修改指定類型 inbound 嘅 listen_port（只寫文件，唔重啟）
+func SaveInboundPort(typ string, newPort int) CommandResult {
 	if newPort < 1 || newPort > 65535 {
 		return CommandResult{Ok: false, Error: "invalid port: " + fmt.Sprintf("%d", newPort)}
 	}
@@ -768,9 +760,7 @@ func UpdateInboundPort(typ string, newPort int) CommandResult {
 		}
 		if t, ok := ib["type"].(string); ok && t == typ {
 			ib["listen_port"] = newPort
-			// 更新 tag（e.g. SS-20001 -> SS-8443）
 			if oldTag, ok := ib["tag"].(string); ok {
-				// 取 dash 前部分 + 新端口
 				for i := len(oldTag) - 1; i >= 0; i-- {
 					if oldTag[i] == '-' {
 						ib["tag"] = oldTag[:i] + "-" + fmt.Sprintf("%d", newPort)
@@ -782,12 +772,7 @@ func UpdateInboundPort(typ string, newPort int) CommandResult {
 			if err := os.WriteFile(cfgPath, dat, 0644); err != nil {
 				return CommandResult{Ok: false, Error: "write config failed: " + err.Error()}
 			}
-			msg := fmt.Sprintf("%s port updated: %d -> %d", typ, ib["listen_port"], newPort)
-			r := RestartSingbox(nil)
-			if !r.Ok {
-				return CommandResult{Ok: false, Error: "restart failed: " + r.Error}
-			}
-			return CommandResult{Ok: true, Stdout: msg + "\n" + r.Stdout}
+			return CommandResult{Ok: true, Stdout: typ + " port saved: " + fmt.Sprintf("%d", newPort)}
 		}
 	}
 	return CommandResult{Ok: false, Error: "no inbound of type " + typ + " found"}
@@ -880,28 +865,20 @@ func UpdateAnyRealityPassword() (string, CommandResult) {
 		return "", CommandResult{Ok: false, Error: "write " + targetFile + ": " + err.Error()}
 	}
 	msg := "updated " + targetFile
-	r := RestartSingbox(nil)
-	if !r.Ok {
-		return "", CommandResult{Ok: false, Error: "restart sing-box failed: " + r.Error}
-	}
 	return newPw, CommandResult{
-		Ok: true, Stdout: "AnyTLS-Reality password updated: " + newPw + "\n" + msg + "\n" + r.Stdout, Stderr: r.Stderr,
+		Ok: true, Stdout: "AnyTLS-Reality password updated: " + newPw + "\n" + msg,
 	}
 }
 
-// UpdateAnyTLSUUID 生成新 UUID → 寫入配置 → 重啟 sing-box
+// UpdateAnyTLSUUID 生成新 UUID → 寫入配置
 func UpdateAnyTLSUUID() (string, CommandResult) {
 	newUUID := newUUID()
 	msg, r := updateInboundPassword("anytls", newUUID)
 	if !r.Ok {
 		return "", r
 	}
-	r2 := RestartSingbox(nil)
-	if !r2.Ok {
-		return "", CommandResult{Ok: false, Error: "restart sing-box failed: " + r2.Error}
-	}
 	return newUUID, CommandResult{
-		Ok: true, Stdout: "UUID updated: " + newUUID + "\n" + msg + "\n" + r2.Stdout, Stderr: r2.Stderr,
+		Ok: true, Stdout: "UUID updated: " + newUUID + "\n" + msg, Stderr: r.Stderr,
 	}
 }
 

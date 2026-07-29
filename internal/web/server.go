@@ -150,19 +150,29 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	case "nodes-url":
-		urlStr, result := exec.GenAnyTLSURLWithParams(req.Host, req.Port)
-		if result.Ok {
+		result := exec.SaveInboundPort("anytls", req.Port)
+		if !result.Ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "save port failed: " + result.Error})
+			return
+		}
+		urlStr, urlResult := exec.GenAnyTLSURLWithParams(req.Host, req.Port)
+		if urlResult.Ok {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "url": urlStr})
 		} else {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": urlResult.Error})
 		}
 		return
 	case "nodes-hy2-url":
-		urlStr, result := exec.GenHY2URLWithParams(req.Host, req.Port)
-		if result.Ok {
+		result := exec.SaveInboundPort("hysteria2", req.Port)
+		if !result.Ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "save port failed: " + result.Error})
+			return
+		}
+		urlStr, urlResult := exec.GenHY2URLWithParams(req.Host, req.Port)
+		if urlResult.Ok {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "url": urlStr})
 		} else {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": urlResult.Error})
 		}
 		return
 	case "nodes-ss-url":
@@ -170,11 +180,16 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		if method == "" {
 			method = "aes-256-gcm"
 		}
-		urlStr, result := exec.GenSSURLWithParams(req.Host, req.Port, method)
-		if result.Ok {
+		result := exec.SaveInboundPort("shadowsocks", req.Port)
+		if !result.Ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "save port failed: " + result.Error})
+			return
+		}
+		urlStr, urlResult := exec.GenSSURLWithParams(req.Host, req.Port, method)
+		if urlResult.Ok {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "url": urlStr, "method": method})
 		} else {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": urlResult.Error})
 		}
 		return
 	case "nodes-current-password":
@@ -226,24 +241,6 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		newPw, result := exec.UpdateSSPassword()
 		if result.Ok {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "password": newPw, "stdout": result.Stdout})
-		} else {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
-		}
-		return
-	case "nodes-update-port":
-		port := req.Port
-		typ := req.Server
-		if typ == "" {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "type required (anytls/hy2/ss)"})
-			return
-		}
-		if port < 1 || port > 65535 {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": "invalid port"})
-			return
-		}
-		result := exec.UpdateInboundPort(typ, port)
-		if result.Ok {
-			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "stdout": result.Stdout})
 		} else {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
 		}
@@ -374,7 +371,7 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 <tr><td>映射端口</td><td><input type="number" id="anytls-mapped" class="input" placeholder="留空=內部端口"></td></tr>
 <tr><td>系統密碼</td><td><span id="anytls-pwd" class="status-value">載入中...</span></td></tr>
 </table>
-<div class="btn-group"><button class="btn success" onclick="getAnyTLSNode()">獲取節點</button><button class="btn" onclick="updatePort('anytls','anytls-port','r-anytls')">更新端口</button><button class="btn" onclick="updateAnyTLSUUID()">更新 UUID</button><button class="btn" onclick="viewAnyTLSPassword()">查看系統密碼</button></div>
+<div class="btn-group"><button class="btn success" onclick="getAnyTLSNode()">獲取節點</button><button class="btn" onclick="updateAnyTLSUUID()">更新 UUID</button><button class="btn" onclick="viewAnyTLSPassword()">查看系統密碼</button></div>
 <div id="r-anytls" class="result"></div>
 <div id="c-anytls" class="copy-row" style="display:none"><div class="copy-box" id="anytls-box"></div><button class="btn-copy" onclick="copyText(document.getElementById('anytls-box').textContent)">📋 複製</button></div>
 </div>
@@ -387,7 +384,7 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 <tr><td>映射端口</td><td><input type="number" id="hy2-mapped" class="input" placeholder="留空=內部端口"></td></tr>
 <tr><td>系統密碼</td><td><span id="hy2-pwd" class="status-value">載入中...</span></td></tr>
 </table>
-<div class="btn-group"><button class="btn success" onclick="getHY2Node()">獲取節點</button><button class="btn" onclick="updatePort('hy2','hy2-port','r-hy2')">更新端口</button><button class="btn" onclick="updateHY2Password()">更新密碼</button><button class="btn" onclick="viewPassword('hy2')">查看系統密碼</button></div>
+<div class="btn-group"><button class="btn success" onclick="getHY2Node()">獲取節點</button><button class="btn" onclick="updateHY2Password()">更新密碼</button><button class="btn" onclick="viewPassword('hy2')">查看系統密碼</button></div>
 <div id="r-hy2" class="result"></div>
 <div id="c-hy2" class="copy-row" style="display:none"><div class="copy-box" id="hy2-box"></div><button class="btn-copy" onclick="copyText(document.getElementById('hy2-box').textContent)">📋 複製</button></div>
 </div>
@@ -401,7 +398,7 @@ h1{text-align:center;margin-bottom:4px;color:#58a6ff;font-size:1.5em}
 <tr><td>加密</td><td><select id="ss-method" class="input"><option>aes-256-gcm</option><option>aes-128-gcm</option><option>chacha20-poly1305</option><option>chacha20-ietf-poly1305</option></select></td></tr>
 <tr><td>系統密碼</td><td><span id="ss-pwd" class="status-value">載入中...</span></td></tr>
 </table>
-<div class="btn-group"><button class="btn success" onclick="getSSNode()">獲取節點</button><button class="btn" onclick="updatePort('ss','ss-port','r-ss')">更新端口</button><button class="btn" onclick="updateSSPassword()">更新密碼</button><button class="btn" onclick="viewPassword('ss')">查看系統密碼</button></div>
+<div class="btn-group"><button class="btn success" onclick="getSSNode()">獲取節點</button><button class="btn" onclick="updateSSPassword()">更新密碼</button><button class="btn" onclick="viewPassword('ss')">查看系統密碼</button></div>
 <div id="r-ss" class="result"></div>
 <div id="c-ss" class="copy-row" style="display:none"><div class="copy-box" id="ss-box"></div><button class="btn-copy" onclick="copyText(document.getElementById('ss-box').textContent)">📋 複製</button></div>
 </div>
@@ -438,14 +435,13 @@ var sm=lcGet('ss-method');if(sm)document.getElementById('ss-method').value=sm;
 ['anytls-port','anytls-mapped','hy2-port','hy2-mapped','ss-port','ss-mapped','ss-method'].forEach(function(id){var e=document.getElementById(id);if(e)e.addEventListener('input',function(){lcSet(id,e.value)})})}
 function showNode(boxId,copyId,resultId,url){document.getElementById(boxId).textContent=url;document.getElementById(copyId).style.display='flex';show(resultId,'✅ 已生成',true)}
 function getPort(insideId,mappedId){var m=document.getElementById(mappedId).value;return parseInt(m)||parseInt(document.getElementById(insideId).value)||0}
-async function getAnyTLSNode(){var port=getPort('anytls-port','anytls-mapped');const u=await api('nodes-url',{port:port});if(u.ok&&u.url){showNode('anytls-box','c-anytls','r-anytls',u.url)}else{show('r-anytls','FAIL: '+(u.error||''),false)}}
-async function getHY2Node(){var port=getPort('hy2-port','hy2-mapped');const u=await api('nodes-hy2-url',{port:port});if(u.ok&&u.url){showNode('hy2-box','c-hy2','r-hy2',u.url)}else{show('r-hy2','FAIL: '+(u.error||''),false)}}
-async function getSSNode(){var port=getPort('ss-port','ss-mapped');var method=document.getElementById('ss-method').value;const u=await api('nodes-ss-url',{port:port,method:method});if(u.ok&&u.url){showNode('ss-box','c-ss','r-ss',u.url)}else{show('r-ss','FAIL: '+(u.error||''),false)}}
+async function getAnyTLSNode(){var port=getPort('anytls-port','anytls-mapped');const b=event.target;b.disabled=true;try{const u=await api('nodes-url',{port:port});if(u.ok&&u.url){showNode('anytls-box','c-anytls','r-anytls',u.url)}else{show('r-anytls','FAIL: '+(u.error||''),false)}}catch(e){show('r-anytls','ERROR: '+e.message,false)}b.disabled=false}
+async function getHY2Node(){var port=getPort('hy2-port','hy2-mapped');const b=event.target;b.disabled=true;try{const u=await api('nodes-hy2-url',{port:port});if(u.ok&&u.url){showNode('hy2-box','c-hy2','r-hy2',u.url)}else{show('r-hy2','FAIL: '+(u.error||''),false)}}catch(e){show('r-hy2','ERROR: '+e.message,false)}b.disabled=false}
+async function getSSNode(){var port=getPort('ss-port','ss-mapped');var method=document.getElementById('ss-method').value;const b=event.target;b.disabled=true;try{const u=await api('nodes-ss-url',{port:port,method:method});if(u.ok&&u.url){showNode('ss-box','c-ss','r-ss',u.url)}else{show('r-ss','FAIL: '+(u.error||''),false)}}catch(e){show('r-ss','ERROR: '+e.message,false)}b.disabled=false}
 async function updateAnyTLSUUID(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-uuid');if(r.ok){show('r-anytls','✅ UUID 已更新\n'+r.stdout,true);b.disabled=false}else{show('r-anytls','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-anytls','ERROR: '+e.message,false);b.disabled=false}}
 async function updateHY2Password(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-hy2');if(r.ok){show('r-hy2','✅ 密碼已更新\n'+r.stdout,true);b.disabled=false}else{show('r-hy2','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-hy2','ERROR: '+e.message,false);b.disabled=false}}
 async function updateSSPassword(){const b=event.target;b.disabled=true;try{const r=await api('nodes-update-ss');if(r.ok){show('r-ss','✅ 密碼已更新\\n'+r.stdout,true);b.disabled=false}else{show('r-ss','FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show('r-ss','ERROR: '+e.message,false);b.disabled=false}}
-async function updatePort(typ,pid,rid){const port=parseInt(document.getElementById(pid).value);const b=event.target;b.disabled=true;try{const r=await api('nodes-update-port',{port:port,server:typ});if(r.ok){show(rid,'✅ '+typ+' 端口已更新\\n'+r.stdout,true);b.disabled=false}else{show(rid,'FAIL: '+(r.error||''),false);b.disabled=false}}catch(e){show(rid,'ERROR: '+e.message,false);b.disabled=false}}
-async function viewAnyTLSPassword(){const d=await viewPassword('anytls')}
+ async function viewAnyTLSPassword(){const d=await viewPassword('anytls')}
 async function viewPassword(type){const t={anytls:'anytls-pwd',hy2:'hy2-pwd',ss:'ss-pwd'};const rid={anytls:'r-anytls',hy2:'r-hy2',ss:'r-ss'};const label={anytls:'AnyTLS',hy2:'HY2',ss:'SS'};try{const d=await api('nodes-current-password');var pw=d.passwords&&d.passwords[type];if(pw){document.getElementById(t[type]).textContent=pw;show(rid[type],label[type]+' 系統密碼: '+pw,true)}else{show(rid[type],label[type]+' 未找到密碼',false)}}catch(e){show(rid[type],'ERROR: '+e.message,false)}}
 (function(){api('nodes-current-password').then(function(d){var pw=d.passwords;var ports=d.ports;if(pw&&pw.anytls)document.getElementById('anytls-pwd').textContent=pw.anytls;if(pw&&pw.hy2)document.getElementById('hy2-pwd').textContent=pw.hy2;if(pw&&pw.ss)document.getElementById('ss-pwd').textContent=pw.ss;if(ports&&ports.anytls)document.getElementById('anytls-port').value=ports.anytls;if(ports&&ports.hy2)document.getElementById('hy2-port').value=ports.hy2;if(ports&&ports.ss)document.getElementById('ss-port').value=ports.ss}).catch(function(){})})()
 </script>
