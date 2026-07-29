@@ -1,72 +1,71 @@
 #!/bin/bash
-# deploy.sh - 舊版 SSH 部署腳本（已廢棄，請改用 install.sh）
-#
-# 新功能腳本:
-#   curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/install.sh | sudo bash -s -- --full
-#
-# 保留此腳本僅供參考，不會再維護。
-# ============================================================
-set -e
+# y-ui deploy: build locally → upload → atomically replace running binary
+# Usage: bash deploy.sh
+set -euo pipefail
 
-VPS_HOST="${VPS_HOST:-}"
-VPS_USER="${VPS_USER:-}"
-VPS_PASS="${VPS_PASS:-}"
-REMOTE_DIR="${REMOTE_DIR:-/opt/singbox-panel}"
-PORT="${PANEL_PORT:-19999}"
+VPS="23.94.147.211"
+PORT="20022"
+BIN_NAME="y-ui-linux"
+REMOTE="/opt/y-ui/y-ui"
 
-echo "=== 舊版部署腳本（已廢棄）==="
-echo "請改用 install.sh:"
-echo "  curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/install.sh | sudo bash -s -- --full"
-echo ""
-
-if [ -z "$VPS_HOST" ]; then
-    echo "ERROR: 請設定 VPS_HOST 環境變量"
-    echo "  export VPS_HOST=your-vps-ip"
-    exit 1
+SSH_PASS="${SSH_PASS:-}"
+if [ -z "$SSH_PASS" ]; then
+  echo "ERROR: set SSH_PASS env var first (e.g. export SSH_PASS=yourpassword)"; exit 1
 fi
 
-if [ -z "$VPS_PASS" ]; then
-    echo "ERROR: 請設定 VPS_PASS 環境變量"
-    echo "  export VPS_PASS=your-password"
-    exit 1
+C() {
+  sshpass -p "$SSH_PASS" ssh -p "$PORT" \
+    -o StrictHostKeyChecking=no "root@$VPS" "$1"
+}
+
+cd "$(dirname "$0")"
+
+echo "=== [1/5] Build ==="
+rm -f "$BIN_NAME"
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$BIN_NAME" ./cmd/
+LOCAL_SHA=$(sha256sum "$BIN_NAME" | cut -d' ' -f1)
+echo "Built: $LOCAL_SHA"
+
+echo "=== [2/5] JS syntax check (embedded) ==="
+python3 - <<'PYEOF'
+import re
+s = open('internal/web/server.go', encoding='utf-8').read()
+bt = s.index('return `')
+start = s.index('<script>', bt) + len('<script>')
+end = s.index('</script>', start)
+js = s[start:end]
+open('/tmp/precheck.js','w',encoding='utf-8').write(js)
+PYEOF
+node --check /tmp/precheck.js
+echo "JS syntax OK ✓"
+
+echo "=== [3/5] Upload (base64 pipe) ==="
+cat "$BIN_NAME" | base64 | C "base64 -d > /tmp/y-ui-up && chmod +x /tmp/y-ui-up"
+REMOTE_SHA=$(C "sha256sum /tmp/y-ui-up | cut -d' ' -f1")
+if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+  echo "SHA MISMATCH ($LOCAL_SHA vs $REMOTE_SHA) - ABORTING"; exit 1
 fi
+echo "SHA match ✓"
 
-echo "目標: ${VPS_USER:-$USER}@${VPS_HOST}:${REMOTE_DIR}"
-echo "端口: ${PORT}"
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-# 1. 打包（排除自身和敏感文件）
-TMP_ARCHIVE="/tmp/singbox-panel.tar.gz"
-tar -czf "$TMP_ARCHIVE" -C "$SCRIPT_DIR" \
-    --exclude='deploy.sh' --exclude='.env' --exclude='*.key' --exclude='*.pem' \
-    --exclude='.git' --exclude='*.zip' \
-    . 2>/dev/null
-
-echo "[${TMP_ARCHIVE}] 大小: $(du -h "$TMP_ARCHIVE" | cut -f1)"
-echo "傳輸中..."
-
-B64=$(base64 "$TMP_ARCHIVE")
-sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${VPS_USER:-$USER}@${VPS_HOST}" \
-    "mkdir -p ${REMOTE_DIR} && echo '${B64}' | base64 -d | tar -xzf - -C ${REMOTE_DIR} && echo TRANSMIT_OK"
-
-echo "部署文件列表:"
-sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${VPS_USER:-$USER}@${VPS_HOST}" \
-    "ls -la ${REMOTE_DIR}"
-
-echo "啟動面板 (端口 ${PORT})..."
-sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${VPS_USER:-$USER}@${VPS_HOST}" \
-    "export SINGBOX_SUDO_PASS='${VPS_PASS}' && SINGBOX_PANEL_PORT=${PORT} sudo -S nohup python3 ${REMOTE_DIR}/panel.py > ${REMOTE_DIR}/panel.log 2>&1 & echo PID=\$!"
-
+echo "=== [4/5] Kill old + start new ==="
+C "pkill -9 y-ui 2>/dev/null || true; sleep 2"
+C "echo '=== after kill ===' && pgrep y-ui || echo 'no y-ui running'"
+C "cp /tmp/y-ui-up $REMOTE && chmod +x $REMOTE && rm -f /tmp/y-ui-up"
+C "$REMOTE -port 8080 > /tmp/yui.log 2>&1 & echo NEWPID=\$!"
 sleep 2
+C "netstat -tlnp | grep 8080 && echo '--- log ---' && cat /tmp/yui.log"
 
-echo "檢查端口..."
-sshpass -p "$VPS_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "${VPS_USER:-$USER}@${VPS_HOST}" \
-    "ss -tlnp | grep ${PORT} || echo PORT_NOT_LISTENING"
-
-echo ""
-echo "=== 部署完成 ==="
-echo "訪問: http://${VPS_HOST}:${PORT}/"
-echo "日誌: ${REMOTE_DIR}/panel.log"
-
-rm -f "$TMP_ARCHIVE"
+echo "=== [5/5] Verify rendered JS + API ==="
+curl -s "http://$VPS:18080/" > /tmp/r.html
+python3 - <<'PYEOF'
+import re
+html=open('/tmp/r.html').read()
+m=re.search(r'<script>(.*?)</script>',html,re.S)
+js=m.group(1) if m else ''
+open('/tmp/rendered.js','w').write(js)
+print('rendered len:', len(js))
+PYEOF
+node --check /tmp/rendered.js && echo "Rendered JS OK ✓" || { echo "Rendered JS ERROR ✗"; exit 1; }
+API=$(curl -s -X POST "http://$VPS:18080/api" -H 'Content-Type: application/json' -d '{"action":"status"}')
+echo "API: $API"
+echo "=== DEPLOY DONE ✓ ==="
