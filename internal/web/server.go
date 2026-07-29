@@ -211,6 +211,14 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
 		}
 		return
+	case "nodes-update-ss":
+		newPw, result := exec.UpdateSSPassword()
+		if result.Ok {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "password": newPw, "stdout": result.Stdout})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": result.Error})
+		}
+		return
 	case "nodes-update-hy2":
 		newPw, result := exec.UpdateHY2Password()
 		if result.Ok {
