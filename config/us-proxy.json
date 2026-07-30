@@ -1,0 +1,24 @@
+{
+  "inbounds": [
+    {
+      "type": "socks",
+      "listen_port": 10810,
+      "tag": "us-socks"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "anytls",
+      "tag": "us-out",
+      "server": "REPLACE_WITH_UPSTREAM_HOST",
+      "server_port": 443,
+      "tls": {
+        "enabled": true,
+        "insecure": true
+      },
+      "transport": {
+        "type": "ws"
+      }
+    }
+  ]
+}

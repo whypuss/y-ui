@@ -1,0 +1,14 @@
+[Unit]
+Description=Sing-Box (main process)
+After=network-online.target sing-box-us.service sing-box-jp.service
+Wants=network-online.target sing-box-us.service sing-box-jp.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

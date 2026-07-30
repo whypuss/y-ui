@@ -1,0 +1,102 @@
+{
+  "log": {
+    "level": "info"
+  },
+  "inbounds": [
+    {
+      "type": "vless",
+      "listen_port": 443,
+      "tag": "VLESS-REALITY-443",
+      "users": [
+        {
+          "uuid": "REPLACE_WITH_YOUR_UUID"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "private_key": "REPLACE_WITH_GENERATED_KEY",
+          "short_id": [
+            "REPLACE_SHORT_ID"
+          ]
+        },
+        "server_name": "REPLACE_SERVER_NAME"
+      }
+    },
+    {
+      "type": "vless",
+      "listen_port": 8894,
+      "tag": "VLESS-WS-8894",
+      "users": [
+        {
+          "uuid": "REPLACE_WITH_YOUR_UUID"
+        }
+      ],
+      "transport": {
+        "type": "ws",
+        "path": "/vless-ws"
+      }
+    },
+    {
+      "type": "mixed",
+      "listen_port": 10808,
+      "tag": "TProxy-Mixed-10808"
+    },
+    {
+      "type": "socks",
+      "listen_port": 1080,
+      "tag": "SOCKS5-1080"
+    },
+    {
+      "type": "anytls",
+      "listen_port": 17777,
+      "tag": "ANYTLS-17777",
+      "users": [
+        {
+          "password": "REPLACE_WITH_YOUR_UUID"
+        }
+      ]
+    },
+    {
+      "type": "hysteria2",
+      "listen_port": 20000,
+      "tag": "HY2-20000",
+      "users": [
+        {
+          "password": "REPLACE_WITH_GENERATED_PASSWORD"
+        }
+      ]
+    },
+    {
+      "type": "shadowsocks",
+      "listen_port": 20001,
+      "method": "aes-256-gcm",
+      "tag": "SS-20001",
+      "password": "REPLACE_WITH_GENERATED_PASSWORD"
+    },
+    {
+      "type": "tun",
+      "auto_route": false,
+      "strict_route": false,
+      "tag": "TUN"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "socks",
+      "server": "127.0.0.1",
+      "server_port": 10810,
+      "tag": "us-proxy"
+    },
+    {
+      "type": "socks",
+      "server": "127.0.0.1",
+      "server_port": 10811,
+      "tag": "proxy-chain"
+    }
+  ],
+  "route": {
+    "final": "direct"
+  }
+}

@@ -1,0 +1,15 @@
+[Unit]
+Description=y-ui Web Panel
+After=network-online.target sing-box.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=maxwell
+Group=maxwell
+ExecStart=/opt/y-ui/y-ui --port 19999
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

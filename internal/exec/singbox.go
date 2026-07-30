@@ -263,19 +263,23 @@ func RestartSingbox(ctx context.Context) CommandResult {
 	_ = ctx
 	_ = setTunAutoRoute(false)
 
+	// auto-detect 用緊邊個 systemd service，避免寫死 sing-box-main.service
 	restart := runCommandWithSudo([]string{"sh", "-c", `
 echo "checking service manager..."
-# 強制 kill 舊進程，避免舊配置殘留
-pkill -9 -f "sing-box run -c" || true
-sleep 2
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-    echo "using systemd"
-    systemctl restart sing-box-main.service
+    echo "using systemd restart"
+    # 先試 sing-box.service（用戶原有），不存在就試 sing-box-main.service
+    if systemctl list-unit-files | grep -q "sing-box\.service"; then
+        systemctl restart sing-box.service
+    else
+        systemctl restart sing-box-main.service
+    fi
     sleep 3
 elif command -v rc-service >/dev/null 2>&1; then
     echo "using OpenRC"
+    pkill -9 -f "sing-box run -c" || true
+    sleep 2
     /etc/init.d/sing-box start 2>&1 || true
-    # OpenRC init 啟動唔到就 fallback 直接啟動
     sleep 2
     if ! pgrep -f "sing-box run -c" >/dev/null 2>&1; then
       echo "fallback: direct start"
@@ -283,7 +287,9 @@ elif command -v rc-service >/dev/null 2>&1; then
       sleep 3
     fi
 else
-    echo "using direct start"
+    echo "direct start (no service manager)"
+    pkill -9 -f "sing-box run -c" || true
+    sleep 2
     nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json > /var/log/sing-box.log 2>&1 &
     sleep 3
 fi
@@ -316,13 +322,13 @@ with open(path) as f:
 for ib in c.get("inbounds", []):
     if ib.get("type") == "tun":
         ib["auto_route"] = %v
-        ib["strict_route"] = %v
-        print("TUN auto_route=%v strict_route=%v")
+        ib["strict_route"] = False  # [TUN-RULE] bak2 confirmed: strict_route=false, auto_route=true
+        print("TUN auto_route=%v strict_route=false")
         break
 with open(path, "w") as f:
     json.dump(c, f, indent=2)
 PYEOF
-`, on, on, on, on)
+`, on, on)
 	var stdout, stderr bytes.Buffer
 	cmd := exec.Command("sh", "-c", script)
 	cmd.Stdout = &stdout
@@ -364,51 +370,40 @@ func TproxyOn(ctx context.Context) CommandResult {
 
 // TproxyOff 關閉 TProxy
 func TproxyOff(ctx context.Context) CommandResult {
-	// 清理 mangle + 移除 iproute TPROXY rule
-	script := `iptables -t mangle -F; ip6tables -t mangle -F 2>/dev/null; ip rule del fwmark 0x1/0x1 lookup 100 2>/dev/null; ip route del local 0.0.0.0/0 dev lo table 100 2>/dev/null; echo "TProxy disabled - mangle cleared, iproute rules removed"`
-	r := runCommandWithSudo([]string{"sh", "-c", script})
-	// 恢復網關基礎規則（使用保存嘅 iptables 配置）
-	cfg := ReadIptablesConfig()
-	_ = RestoreGateway(cfg.Interface, cfg.LANSubnet)
 	_ = ctx
-	return r
+	script := `iptables -t mangle -F; ip6tables -t mangle -F 2>/dev/null; ip rule del fwmark 0x1/0x1 lookup 100 2>/dev/null; ip route del local 0.0.0.0/0 dev lo table 100 2>/dev/null; echo "TProxy disabled - mangle cleared, iproute rules removed"`
+	return runCommandWithSudo([]string{"sh", "-c", script})
 }
 
-// TunOn 啟動 TUN 模式（獨立的 TUN 開關，不與其他模塊互斥）
-// 設 auto_route=true → sing-box 寫 policy routing rules 將流量路由入 tun0
+// TunOn 重啟 sing-box 主進程（令 TUN inbound 生效）
+// 唔設 auto_route=true — auto_route 會寫 policy routing rules，
+// 而 tun0 隧道無對端時會令所有流量攅入死路斷網，
+// 所以 auto_route 保持 false，用家如要真實 TUN 轉發自行配。
 func TunOn() CommandResult {
-	// 設 auto_route=true（sing-box 寫 policy routing rules）
-	_ = setTunAutoRoute(true)
+	// 設 auto_route=false，避免寫 policy routing rules 斷網
+	_ = setTunAutoRoute(false)
 
-	// 檢查主進程是否已在運行
-	cmd := exec.Command("sh", "-c", `ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | wc -l`)
-	out, _ := cmd.Output()
-	n := strings.TrimSpace(string(out))
-	if n != "0" {
-		// 已在運行，確認是否需要重啟以生效 auto_route
-	}
-
-	// 用 systemd 重啟主進程（確保 auto_route=true 生效）
+	// 用 systemd 重啟主進程，auto-detect sing-box.service vs sing-box-main.service
 	startScript := `
-echo "starting sing-box-main.service (TUN mode: auto_route=true)..."
-systemctl restart sing-box-main.service
-sleep 3
-if ! systemctl is-active --quiet sing-box-main.service; then
-    nohup env ENABLE_DEPRECATED_LEGACY_DNS_SERVERS=true /etc/sing-box/bin/sing-box run -c /etc/sing-box/config.json -C /etc/sing-box/conf > /var/log/sing-box.log 2>&1 &
-    sleep 3
+echo "restarting sing-box (auto_route=false)..."
+if systemctl list-unit-files | grep -q "sing-box\.service"; then
+    systemctl restart sing-box.service
+else
+    systemctl restart sing-box-main.service
 fi
-# 驗證 TUN 模式生效
-echo "=== policy routing rules ==="
-ip rule show | grep "^90[0-9][0-9]:" || echo "no 90xx rules"
-echo "=== tun0 ==="
-ip link show tun0 2>/dev/null || echo "no tun0"
+sleep 3
+
+# 驗證
+echo "=== sing-box process ==="
 ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head -1
+echo "=== ip rule 90xx (should be absent) ==="
+ip rule show | grep "^90[0-9][0-9]:" || echo "no 90xx rules (good)"
 `
 	r := runCommandWithSudo([]string{"sh", "-c", startScript})
 
 	return CommandResult{
 		Ok:     r.Ok,
-		Stdout: "TUN enabled: " + r.Stdout,
+		Stdout: "sing-box restarted (auto_route=false): " + r.Stdout,
 		Stderr: r.Stderr,
 	}
 }
@@ -417,12 +412,18 @@ ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | head 
 // 同時清理 sing-box 寫入嘅 policy routing rules（9000–9010）同 table 2022，
 // 避免殘留 rule 攔截所有流量去失效嘅 table 2022，令關 TUN 後依然斷網。
 func TunOff() CommandResult {
-	// 用 systemctl stop（唔會觸發 systemd Restart=always 自動復活）
-	// 清理 sing-box auto_route 殘留嘅 policy routing rules + table 2022
+	// 設 auto_route=false
+	_ = setTunAutoRoute(false)
+
 	var buf bytes.Buffer
 	buf.WriteString(`
-echo "stopping sing-box-main.service (no auto-restart)..."
-systemctl stop sing-box-main.service 2>/dev/null
+echo "stopping sing-box (TUN mode)..."
+# 用 systemctl stop（sing-box.service）
+if systemctl list-unit-files | grep -q "sing-box\.service"; then
+    systemctl stop sing-box.service
+else
+    systemctl stop sing-box-main.service 2>/dev/null || true
+fi
 sleep 2
 
 # 強制清理 policy routing rules (9000-9010) + flush table 2022
@@ -431,25 +432,20 @@ for p in 9000 9001 9002 9003 9004 9005 9006 9007 9008 9009 9010 2022; do
 done
 ip route flush table 2022 2>/dev/null || true
 
-# 強制移除 tun0 接口（如果殘留）
+# 移除 tun0 接口
 if ip link show tun0 >/dev/null 2>&1; then
     ip link del tun0 2>/dev/null || true
 fi
 
-# 驗證
 if ip link show tun0 >/dev/null 2>&1; then
     echo "WARNING: tun0 still exists"
 else
     echo "TUN disabled - tun0 removed, rules cleaned"
 fi
 
-# 確認主進程死咗
 ps aux | grep "sing-box run -c /etc/sing-box/config.json" | grep -v grep | wc -l
 `)
 	r := runCommandWithSudo([]string{"sh", "-c", buf.String()})
-	// 恢復網關基礎規則（使用保存嘅 iptables 配置）
-	cfg := ReadIptablesConfig()
-	_ = RestoreGateway(cfg.Interface, cfg.LANSubnet)
 	return r
 }
 

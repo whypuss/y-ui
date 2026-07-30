@@ -1,0 +1,26 @@
+{
+  "inbounds": [
+    {
+      "type": "socks",
+      "listen_port": 10811,
+      "tag": "jp-socks"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "jp-out",
+      "server": "REPLACE_WITH_UPSTREAM_HOST",
+      "server_port": 443,
+      "tls": {
+        "enabled": true,
+        "insecure": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "REPLACE_WITH_PUBLIC_KEY",
+          "short_id": "REPLACE_SHORT_ID"
+        }
+      }
+    }
+  ]
+}

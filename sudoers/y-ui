@@ -1,0 +1,4 @@
+# y-ui sudoers — NOEDITALL
+# Install: sudo cp this-file /etc/sudoers.d/y-ui
+# Replace 'maxwell' with the user running y-ui
+maxwell ALL=(ALL) NOPASSWD: /usr/bin/systemctl, /usr/sbin/iptables, /usr/sbin/ip, /usr/bin/pkill, /usr/bin/kill, /usr/bin/killall

@@ -1,0 +1,13 @@
+[Unit]
+Description=Sing-Box (JP proxy - VLESS Reality)
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/etc/sing-box/bin/sing-box run -c /etc/sing-box/jp-proxy.json
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
