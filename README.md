@@ -27,6 +27,17 @@ curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh 
 curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh | sudo bash -s -- --full --port 8888
 ```
 
+### 安裝參數
+
+| 參數 | 說明 | 預設 |
+|------|------|------|
+| `--full` | 完整安裝（sing-box + y-ui） | — |
+| `--panel` | 僅安裝 y-ui（已有 sing-box） | — |
+| `--port` | 面板端口 | `19999` |
+| `--version` | sing-box 版本號 | `latest` |
+| `--admin` | 運行用戶 | 當前用戶 |
+| `--uninstall` | 解除安裝 | — |
+
 其他方式：
 
 ### 僅安裝 y-ui（已有 sing-box）
