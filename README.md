@@ -22,11 +22,15 @@ curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh 
 
 其他方式：
 
-```bash
-# 僅安裝 y-ui（已有 sing-box）
-curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh | sudo bash -s -- --panel
+### 僅安裝 y-ui（已有 sing-box）
 
-# 解除安裝
+```bash
+curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh | sudo bash -s -- --panel
+```
+
+### 解除安裝
+
+```bash
 curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh | sudo bash -s -- --uninstall
 ```
 
