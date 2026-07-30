@@ -1,4 +1,4 @@
-# y-ui — Manual Installation Guide
+# y-ui — Manual Installation Guide / 手動安裝指南
 
 > **What y-ui is:** A lightweight Web control panel for sing-box, written in Go.
 > It is a **single static binary** — no Docker, no Node.js, no Python, no database needed.
@@ -12,7 +12,7 @@
 
 ---
 
-## Table of Contents
+## Table of Contents / 目錄
 
 1. [Requirements](#1-requirements)
 2. [Pre-flight Check](#2-pre-flight-check)
@@ -26,7 +26,7 @@
 
 ---
 
-## 1. Requirements
+## 1. Requirements / 系統要求
 
 ### Hardware
 
@@ -55,7 +55,7 @@ Only the person building from source needs Go 1.21+.
 
 ---
 
-## 2. Pre-flight Check
+## 2. Pre-flight Check / 安裝前檢查
 
 Run this script to verify your system before installing:
 
@@ -87,7 +87,7 @@ sudo -n true && echo "sudo OK"
 
 ---
 
-## 3. Quick Install (one command)
+## 3. Quick Install (one command) / 一鍵安裝
 
 The fastest way to get running. Installs both sing-box and y-ui.
 
@@ -122,7 +122,7 @@ sudo bash scripts/install.sh --uninstall
 
 ---
 
-## 4. Manual Install (step by step)
+## 4. Manual Install (step by step) / 手動安裝
 
 If you prefer full control, follow these steps.
 
@@ -257,7 +257,7 @@ sudo sysctl -p /etc/sysctl.d/99-yui-forward.conf
 
 ---
 
-## 5. Configure Sing-Box
+## 5. Configure Sing-Box / 配置 Sing-Box
 
 ### Basic config structure
 
@@ -290,7 +290,7 @@ operation automatically (see `TUN-RULE.md`).
 
 ---
 
-## 6. Configure sudoers
+## 6. Configure sudoers / 配置 sudoers
 
 The file `/etc/sudoers.d/y-ui` should contain:
 
@@ -306,7 +306,7 @@ the web panel execute these without interactive password prompts.
 
 ---
 
-## 7. Start Services
+## 7. Start Services / 啟動服務
 
 ### Start order (must follow this sequence)
 
@@ -353,7 +353,7 @@ curl -s --max-time 8 --socks5 127.0.0.1:10811 https://www.google.com -o /dev/nul
 
 ---
 
-## 8. Verify Deployment
+## 8. Verify Deployment / 驗證部署
 
 Run the full check script:
 
@@ -378,7 +378,7 @@ Deployments ready.
 
 ---
 
-## 9. Access the Panel
+## 9. Access the Panel / 訪問面板
 
 Open in browser:
 
@@ -417,7 +417,7 @@ http://<SERVER_IP>:19999/
 
 ---
 
-## Maintenance Commands
+## Maintenance Commands / 維護命令
 
 ```bash
 # View panel logs
@@ -438,7 +438,7 @@ sudo systemctl status sing-box sing-box-us sing-box-jp y-ui
 
 ---
 
-## Known Limitations
+## Known Limitations / 已知限制
 
 1. **No authentication** — the panel has no login. Add nginx + basic auth or
    VPN if exposing to the internet.

@@ -1,4 +1,4 @@
-# y-ui — Troubleshooting
+# y-ui — Troubleshooting / 故障排查
 
 > This guide covers common failures when installing or operating y-ui.
 > y-ui manages sing-box through system commands (`systemctl`, `iptables`, `ip`).
@@ -6,7 +6,7 @@
 
 ---
 
-## Table of Contents
+## Table of Contents / 目錄
 
 1. [General Diagnosis Script](#1-general-diagnosis-script)
 2. [Service Will Not Start](#2-service-will-not-start)
@@ -20,7 +20,7 @@
 
 ---
 
-## 1. General Diagnosis Script
+## 1. General Diagnosis Script / 通用診斷
 
 Run this first:
 
@@ -42,7 +42,7 @@ The script checks:
 
 ---
 
-## 2. Service Will Not Start
+## 2. Service Will Not Start / 服務無法啟動
 
 ### Symptom
 
@@ -76,7 +76,7 @@ sudo /opt/y-ui/y-ui --port 19999
 
 ---
 
-## 3. Panel Accessible but Cannot Control sing-box
+## 3. Panel Accessible but Cannot Control sing-box / 面板可訪問但無法控制 sing-box
 
 ### Symptom
 
@@ -114,7 +114,7 @@ If these fail with `sudo: a password is required`, sudoers is not configured cor
 
 ---
 
-## 4. Network Broken After TUN / TProxy Changes
+## 4. Network Broken After TUN / TProxy Changes / TUN/TProxy 後網絡中斷
 
 ### Symptom
 
@@ -165,7 +165,7 @@ the routing rules are carefully separated. In production, one mode should be act
 
 ---
 
-## 5. Port Already in Use
+## 5. Port Already in Use / 端口被占用
 
 ### Symptom
 
@@ -192,7 +192,7 @@ sudo systemctl stop <conflicting-service>
 
 ---
 
-## 6. sing-box Binary Missing or Wrong Architecture
+## 6. sing-box Binary Missing or Wrong Architecture / sing-box 二進制缺失或架構錯誤
 
 ### Symptom
 
@@ -224,7 +224,7 @@ cd /tmp && tar -xf sing-box.tar.xz && sudo mv sing-box /etc/sing-box/bin/
 
 ---
 
-## 7. LXC / Container Problems
+## 7. LXC / Container Problems / LXC/容器問題
 
 ### Symptom
 
@@ -262,7 +262,7 @@ sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
 
 ---
 
-## 8. Node URL Generated but Client Cannot Connect
+## 8. Node URL Generated but Client Cannot Connect / 節點 URL 生成後客戶端無法連接
 
 ### Symptom
 
@@ -297,7 +297,7 @@ but the client cannot connect.
 
 ---
 
-## 9. Logs and Debug Output
+## 9. Logs and Debug Output / 日誌和調試
 
 ### y-ui panel logs
 
