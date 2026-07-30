@@ -20,6 +20,13 @@ curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh 
 
 完整安裝會自動檢測發行版和架構，下載 sing-box，配置服務，啟動面板（`http://<SERVER_IP>:19999/`）。
 
+支持自定義面板端口：
+
+```bash
+# 使用 8888 端口
+curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh | sudo bash -s -- --full --port 8888
+```
+
 其他方式：
 
 ### 僅安裝 y-ui（已有 sing-box）

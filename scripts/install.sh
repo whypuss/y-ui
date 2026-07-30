@@ -251,6 +251,7 @@ step_install_services() {
     # Patch y-ui.service with correct user/port
     sed -i "s/^User=.*/User=${ADMIN_USER}/" "/etc/systemd/system/y-ui.service"
     sed -i "s/^Group=.*/Group=${ADMIN_USER}/" "/etc/systemd/system/y-ui.service"
+    sed -i "s|ExecStart=.*|ExecStart=/opt/y-ui/y-ui --port ${PANEL_PORT}|" "/etc/systemd/system/y-ui.service"
 
     systemctl daemon-reload
     ok "systemd daemon reloaded"
