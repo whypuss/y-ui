@@ -93,13 +93,13 @@ The fastest way to get running. Installs both sing-box and y-ui.
 
 ```bash
 # Option A: Full install (sing-box + y-ui)
-curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/install.sh | sudo bash -s -- --full
+curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh | sudo bash -s -- --full
 
 # Option B: y-ui only (sing-box already installed)
-curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/install.sh | sudo bash -s -- --panel
+curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh | sudo bash -s -- --panel
 
 # Option C: Specify sing-box version
-sudo bash install.sh --full --version 1.13.14
+sudo bash scripts/install.sh --full --version 1.13.14
 ```
 
 **What the script does automatically:**
@@ -117,7 +117,7 @@ sudo bash install.sh --full --version 1.13.14
 **Uninstall:**
 
 ```bash
-sudo bash install.sh --uninstall
+sudo bash scripts/install.sh --uninstall
 ```
 
 ---
