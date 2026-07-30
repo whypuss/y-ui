@@ -20,23 +20,32 @@ curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh 
 
 完整安裝會自動檢測發行版和架構，下載 sing-box，配置服務，啟動面板（`http://<SERVER_IP>:19999/`）。
 
-支持自定義面板端口：
-
-```bash
-# 使用 8888 端口
-curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh | sudo bash -s -- --full --port 8888
-```
-
 ### 安裝參數
 
 | 參數 | 說明 | 預設 |
 |------|------|------|
-| `--full` | 完整安裝（sing-box + y-ui） | — |
-| `--panel` | 僅安裝 y-ui（已有 sing-box） | — |
-| `--port` | 面板端口 | `19999` |
-| `--version` | sing-box 版本號 | `latest` |
-| `--admin` | 運行用戶 | 當前用戶 |
-| `--uninstall` | 解除安裝 | — |
+| `--full` | **完整安裝**。自動下載 sing-box 二進制、生成配置文件、安裝 systemd 服務、配置 sudoers，最後啟動全部服務。一次性搞定全部依賴。 | — |
+| `--panel` | **僅安裝 y-ui**。適合已經有 sing-box 嘅機器，只裝控制面板同服務管理腳本，唔會覆蓋現有 sing-box 配置。 | — |
+| `--port` | **面板端口**。控制 y-ui Web 面板嘅監聽端口，預設 19999。如果端口被佔用或者想換一個，就加呢個參數。 | `19999` |
+| `--version` | **sing-box 版本**。指定要下載嘅 sing-box 版本號，例如 `1.13.14`。留空自動用最新版。LXC 容器建議用 `1.13.14`。 | `latest` |
+| `--admin` | **運行用戶**。指定用邊個系統用戶運行 y-ui，同時寫入 sudoers 配置。唔填就用當前用戶。 | 當前用戶 |
+| `--uninstall` | **解除安裝**。停止並刪除 y-ui 嘅 systemd 服務、sudoers 配置，保留 sing-box 數據。不會刪除 sing-box 本身。 | — |
+
+### 常見組合
+
+```bash
+# 完整安裝，用 8888 端口
+curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh | sudo bash -s -- --full --port 8888
+
+# 完整安裝，指定 sing-box 1.13.14 + 自定義端口 + 指定用戶
+curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh | sudo bash -s -- --full --port 8888 --version 1.13.14 --admin maxwell
+
+# 已有 sing-box，只裝面板（換端口）
+curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh | sudo bash -s -- --panel --port 5588
+
+# 解除安裝
+curl -sL https://raw.githubusercontent.com/whypuss/y-ui/main/scripts/install.sh | sudo bash -s -- --uninstall
+```
 
 其他方式：
 
